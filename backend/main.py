@@ -18,6 +18,7 @@ from typing import Any
 from core.entity_graph import EntityGraph, Entity, EntityType, DomainType, RelType
 from core.event_queue import EventQueue, EventType
 from core.kdtree import SpatialManager
+from core import database
 from simulation.suda import SudaEngine
 from simulation.astar import astar_replan, ThreatRing, Vec3
 from api.routes.planner import router as planner_router
@@ -43,6 +44,12 @@ websocket_clients: list[WebSocket] = []
 sim_running = False
 sim_speed_multiplier = 1.0
 TICK_INTERVAL_MS = 100.0  # 100ms sim-time per tick
+
+# DB persistence state
+current_mission_id: str | None = None
+_weapon_launch_snapshots: dict[str, dict] = {}  # weapon_id → initial properties
+_telemetry_tick_counter: int = 0
+_last_rms_error: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +90,7 @@ def _sync_notify(event_type: str, payload):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     graph.add_listener(_sync_notify)
+    await database.init_db()
     logger.info("GHOST-LINK backend started")
     yield
     logger.info("GHOST-LINK backend shutting down")
@@ -212,9 +220,44 @@ class LaunchRequest(BaseModel):
 
 @app.post("/simulation/launch")
 async def launch_simulation(body: LaunchRequest):
-    global sim_running, sim_speed_multiplier
+    global sim_running, sim_speed_multiplier, current_mission_id
+    global _weapon_launch_snapshots, _telemetry_tick_counter, _last_rms_error
     if sim_running:
         raise HTTPException(400, "Simulation already running")
+
+    import uuid
+    mission_id = str(uuid.uuid4())
+    current_mission_id = mission_id
+    _telemetry_tick_counter = 0
+    _last_rms_error = 0.0
+
+    # Snapshot weapon initial positions before sim starts moving them
+    _weapon_launch_snapshots = {}
+    for w in graph.all_entities(EntityType.WEAPON):
+        p = w.properties
+        # Resolve launch platform from LAUNCHED_FROM relationship
+        platform_rels = graph.query_relationships(w.id, RelType.LAUNCHED_FROM)
+        platform_id = platform_rels[0] if platform_rels else None
+        # Resolve target label from ASSIGNED_TO relationship
+        target_label = None
+        target_rels = graph.query_relationships(w.id, RelType.ASSIGNED_TO)
+        if target_rels:
+            t = graph.get_entity(target_rels[0])
+            if t:
+                target_label = t.properties.get("label")
+        _weapon_launch_snapshots[w.id] = {
+            "lat":                p.get("lat"),
+            "lon":                p.get("lon"),
+            "alt_km":             p.get("alt_km", 10.0),
+            "weapon_type":        p.get("weapon_type"),
+            "target_lat":         p.get("target_lat"),
+            "target_lon":         p.get("target_lon"),
+            "target_label":       target_label,
+            "launch_platform_id": platform_id,
+        }
+
+    await database.create_mission(mission_id, body.sim_speed)
+
     sim_running = True
     sim_speed_multiplier = body.sim_speed
     event_queue.reset()
@@ -224,13 +267,18 @@ async def launch_simulation(body: LaunchRequest):
         end_ms=body.duration_s * 1000,
     )
     asyncio.ensure_future(_simulation_loop())
-    return {"status": "launched", "sim_speed": body.sim_speed}
+    return {"status": "launched", "sim_speed": body.sim_speed, "mission_id": mission_id}
 
 
 @app.post("/simulation/stop")
-def stop_simulation():
+async def stop_simulation():
     global sim_running
     sim_running = False
+    if current_mission_id:
+        await database.finish_mission(
+            current_mission_id, graph, event_queue,
+            _weapon_launch_snapshots, _last_rms_error, aborted=True,
+        )
     return {"status": "stopped"}
 
 
@@ -276,12 +324,19 @@ async def _simulation_loop():
     sim_running = False
     logger.info("Simulation complete at T+%.1fs", event_queue.sim_time_s)
 
+    if current_mission_id:
+        await database.finish_mission(
+            current_mission_id, graph, event_queue,
+            _weapon_launch_snapshots, _last_rms_error, aborted=False,
+        )
+
 
 async def _run_physics_tick():
     """
     Physics tick: update all weapon positions via Rust engine,
     then run SUDA loop.
     """
+    global _last_rms_error, _telemetry_tick_counter
     sim_time_ms = event_queue.sim_time_ms
     weapons = graph.all_entities(EntityType.WEAPON)
 
@@ -365,7 +420,33 @@ async def _run_physics_tick():
                 wid = id_map.get(r["id"])
                 if wid:
                     graph.update_entity(wid, {"tau_i": r["tau_i"]})
+            _last_rms_error = rms_error
             await broadcast_entity_change("tot_rms", {"rms_error_s": rms_error})
+
+        # Telemetry snapshot — every 10 ticks (= 1s sim-time)
+        if current_mission_id:
+            global _telemetry_tick_counter
+            _telemetry_tick_counter += 1
+            if _telemetry_tick_counter % 10 == 0:
+                telemetry_rows = []
+                for w in alive_weapons:
+                    p = w.properties
+                    telemetry_rows.append({
+                        "mission_id":  current_mission_id,
+                        "weapon_id":   w.id,
+                        "sim_time_ms": sim_time_ms,
+                        "lat":         p.get("lat"),
+                        "lon":         p.get("lon"),
+                        "alt_km":      p.get("alt_km"),
+                        "suda_state":  p.get("suda_state"),
+                        "tau_i":       p.get("tau_i"),
+                        "speed_mach":  p.get("speed_mach"),
+                        "fuel_pct":    p.get("fuel_pct"),
+                    })
+                if telemetry_rows:
+                    asyncio.ensure_future(
+                        database.append_telemetry_batch(current_mission_id, telemetry_rows)
+                    )
 
     except ImportError:
         # Rust engine not compiled yet — pure Python fallback
@@ -516,6 +597,38 @@ def get_weapons_catalog():
         raise HTTPException(404, "Weapons catalog not found")
     with open(catalog_path) as f:
         return json.load(f)
+
+
+# ---------------------------------------------------------------------------
+# Mission history endpoints (reads from Supabase)
+# ---------------------------------------------------------------------------
+
+@app.get("/missions")
+async def list_missions():
+    return await database.get_missions()
+
+
+@app.get("/missions/{mission_id}")
+async def get_mission(mission_id: str):
+    result = await database.get_mission(mission_id)
+    if not result:
+        raise HTTPException(404, "Mission not found")
+    return result
+
+
+@app.get("/missions/{mission_id}/events")
+async def get_mission_events(
+    mission_id: str,
+    event_type: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+):
+    return await database.get_mission_events(mission_id, event_type, limit, offset)
+
+
+@app.get("/missions/{mission_id}/telemetry/{weapon_id}")
+async def get_weapon_telemetry(mission_id: str, weapon_id: str):
+    return await database.get_weapon_telemetry(mission_id, weapon_id)
 
 
 # ---------------------------------------------------------------------------

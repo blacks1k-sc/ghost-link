@@ -127,7 +127,7 @@ fn simulate_trial(scenario: &SaturationScenario, seed: u64) -> usize {
                 continue;
             }
             // Effective P_kill adjusted for stealth and evasion
-            let effective_p = p_kill * stealth * (1.0 - evasion_p * rng.next_f64());
+            let effective_p = *p_kill * stealth * (1.0 - evasion_p * rng.next_f64());
             if rng.next_f64() < effective_p {
                 *interceptor_count -= 1;
                 survivors -= 1;

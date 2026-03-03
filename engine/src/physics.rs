@@ -5,7 +5,6 @@
 ///
 /// Performance gate: <5ms for 100 active weapons (validated by criterion bench)
 
-use nalgebra::Vector3;
 use std::f64::consts::PI;
 
 const EARTH_RADIUS_KM: f64 = 6371.0;

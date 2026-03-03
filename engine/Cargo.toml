@@ -8,7 +8,7 @@ name = "ghost_engine"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pyo3 = { version = "0.21", features = ["extension-module"] }
+pyo3 = { version = "0.21", features = ["extension-module", "abi3-py311"] }
 nalgebra = "0.33"
 rayon = "1.10"
 

@@ -131,7 +131,6 @@ impl TotEngine {
 
             // Find neighbors within r_comm
             let mut neighbor_sum = 0.0;
-            let mut neighbor_count = 0;
             for j in 0..n {
                 if i == j || !weapons[j].alive {
                     continue;
@@ -142,7 +141,6 @@ impl TotEngine {
                 );
                 if dist <= self.r_comm_km {
                     neighbor_sum += tau_snapshot[i] - tau_snapshot[j];
-                    neighbor_count += 1;
                 }
             }
 
