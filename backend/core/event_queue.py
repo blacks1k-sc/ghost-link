@@ -37,6 +37,7 @@ class EventType(str, Enum):
     # ToT consensus
     TOT_UPDATED = "TOT_UPDATED"
     TOT_CONVERGED = "TOT_CONVERGED"
+    SPEED_ADJUSTED = "SPEED_ADJUSTED"
 
     # ISR
     ISR_HANDOVER = "ISR_HANDOVER"

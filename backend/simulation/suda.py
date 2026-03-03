@@ -9,12 +9,15 @@ This is the core autonomous behavior of GHOST-LINK.
 from __future__ import annotations
 import math
 import heapq
+
 from enum import Enum
 from typing import Any
 
 from core.entity_graph import EntityGraph, EntityType, RelType, SudaState
 from core.event_queue import EventQueue, EventType
-from core.kdtree import SpatialManager
+from core.kdtree import SpatialManager, haversine_km
+
+MACH_TO_KMPS = 0.299  # ISA at ~10km cruise altitude (matches Rust physics engine)
 
 
 # ---------------------------------------------------------------------------
@@ -256,15 +259,15 @@ class SudaEngine:
             return
 
         if threat_type == ThreatType.TURBULENCE:
-            # Speed reduction — compute Δτ
             speed_factor = evasion.get("speed_factor", 0.85)
             duration_s = evasion["duration_s"]
             dist_to_target = props.get("dist_to_target_km", 1000.0)
             speed_mach = props.get("speed_mach", 0.8)
-            # Δτ = distance / reduced_speed - distance / normal_speed
-            speed_kmps = speed_mach * 0.299
-            delta_tau_s = dist_to_target / (speed_kmps * speed_factor) - dist_to_target / speed_kmps
-            delta_tau_s = min(delta_tau_s, duration_s)
+            speed_kmps = speed_mach * MACH_TO_KMPS
+            delta_tau_s = min(
+                dist_to_target / (speed_kmps * speed_factor) - dist_to_target / speed_kmps,
+                duration_s,
+            )
 
             self.graph.update_entity(weapon_id, {
                 "suda_state": SudaState.EVADING,
@@ -279,14 +282,11 @@ class SudaEngine:
         g_load = evasion["g_load"]
         lateral_km = evasion.get("lateral_offset_km", 5.0)
 
-        # Calculate Δτ from added path length
         speed_mach = props.get("speed_mach", 0.8)
-        speed_kmps = speed_mach * 0.299
-        import math as _math
-        omega = 2 * _math.pi / 20.0
-        added_path = speed_kmps * duration_s * (1 + (lateral_km * omega) ** 2 / (2 * speed_kmps ** 2))
-        direct_path = speed_kmps * duration_s
-        delta_tau_s = (added_path - direct_path) / speed_kmps
+        speed_kmps = speed_mach * MACH_TO_KMPS
+        direct_path_km = speed_kmps * duration_s
+        sturn_path_km = math.sqrt(direct_path_km ** 2 + (2.0 * lateral_km) ** 2)
+        delta_tau_s = (sturn_path_km - direct_path_km) / speed_kmps
 
         # Update entity state → triggers Rust physics to execute S-turn
         self.graph.update_entity(weapon_id, {
@@ -365,6 +365,74 @@ class SudaEngine:
             payload={"sim_time_ms": sim_time_ms},
             priority=0,
         )
+
+    def greedy_interval_schedule(self, sim_time_ms: float):
+        survivors = [
+            w for w in self.graph.all_entities(EntityType.WEAPON)
+            if w.properties.get("suda_state") not in (SudaState.DESTROYED, SudaState.IMPACTED)
+        ]
+        if len(survivors) < 2:
+            return
+
+        tau_star = max(w.properties.get("tau_i", 0.0) for w in survivors)
+        if tau_star <= 0.0:
+            return
+
+        survivors.sort(key=lambda w: tau_star - w.properties.get("tau_i", 0.0))
+
+        for weapon in survivors:
+            props = weapon.properties
+            if props.get("suda_state") == SudaState.EVADING:
+                continue
+
+            lat = props.get("lat", 0.0)
+            lon = props.get("lon", 0.0)
+            target_lat = props.get("target_lat", lat)
+            target_lon = props.get("target_lon", lon)
+            dist_km = haversine_km(lat, lon, target_lat, target_lon)
+
+            if dist_km <= 0.0:
+                continue
+
+            v_required_kmps = dist_km / tau_star
+            v_min_mach = props.get("speed_min_mach", 0.5)
+            v_max_mach = props.get("speed_max_mach", 0.9)
+            v_min_kmps = v_min_mach * MACH_TO_KMPS
+            v_max_kmps = v_max_mach * MACH_TO_KMPS
+
+            loiter = False
+            if v_required_kmps < v_min_kmps:
+                v_adjusted_kmps = v_min_kmps
+                loiter = True
+            else:
+                v_adjusted_kmps = min(v_required_kmps, v_max_kmps)
+
+            v_adjusted_mach = v_adjusted_kmps / MACH_TO_KMPS
+            current_mach = props.get("speed_mach", 0.8)
+            burn_rate = props.get("fuel_burn_rate", 0.0005)
+            fuel_pct = props.get("fuel_pct", 1.0)
+            fuel_cost = abs(v_adjusted_mach - current_mach) * burn_rate * tau_star
+            new_fuel = max(0.0, fuel_pct - fuel_cost)
+
+            self.graph.update_entity(weapon.id, {
+                "speed_mach": v_adjusted_mach,
+                "fuel_pct": new_fuel,
+                "loiter": loiter,
+            })
+
+            self.eq.push_now(
+                EventType.SPEED_ADJUSTED,
+                entity_id=weapon.id,
+                payload={
+                    "tau_star_s": tau_star,
+                    "delta_tau_s": tau_star - props.get("tau_i", 0.0),
+                    "v_adjusted_mach": v_adjusted_mach,
+                    "dist_to_target_km": dist_km,
+                    "loiter": loiter,
+                    "fuel_pct": new_fuel,
+                },
+                priority=2,
+            )
 
     # ------------------------------------------------------------------
     # P_intercept calculation

@@ -168,15 +168,12 @@ pub fn initiate_sturn_evasion(
     state.evasion_g = g_load;
     state.evasion_lateral_offset = lateral_offset_km;
 
-    // Compute added path length (Δτ_i)
-    // ΔL ≈ v * duration * (1 + A²ω²/2v²) where A=offset, ω=2π/period
+    // Pythagorean path extension: S-turn ≈ hypotenuse of (direct_path, 2*lateral_offset)
+    // Matches greedy_interval_schedule and suda.py for consistent τ accounting.
     let v_kmps = mach_to_kmps(state.speed_mach);
-    let omega = 2.0 * PI / 20.0; // 20s period
-    let a = lateral_offset_km;
-    let added_path_km = v_kmps * duration_s * (1.0 + (a * omega).powi(2) / (2.0 * v_kmps.powi(2)));
     let direct_path_km = v_kmps * duration_s;
-    let delta_tau_s = (added_path_km - direct_path_km) / v_kmps;
-    delta_tau_s
+    let sturn_path_km = (direct_path_km.powi(2) + (2.0 * lateral_offset_km).powi(2)).sqrt();
+    (sturn_path_km - direct_path_km) / v_kmps
 }
 
 // ---------------------------------------------------------------------------

@@ -57,6 +57,53 @@ fn compute_bearing(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
+// ToT Consensus bindings
+// ---------------------------------------------------------------------------
+
+#[pyfunction]
+fn tick_consensus(
+    _py: Python,
+    weapons_data: Vec<&PyDict>,
+    dt_s: f64,
+    k1: f64,
+    k2: f64,
+    r_comm_km: f64,
+) -> PyResult<(Vec<PyObject>, f64)> {
+    let mut weapons: Vec<tot::TotWeapon> = weapons_data
+        .iter()
+        .map(|d| {
+            Ok(tot::TotWeapon {
+                id:         d.get_item("id")?.map(|v| v.extract::<u64>()).transpose()?.unwrap_or(0),
+                lat:        d.get_item("lat")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.0),
+                lon:        d.get_item("lon")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.0),
+                tau_i:      d.get_item("tau_i")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.0),
+                tau_nom:    d.get_item("tau_nom")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.0),
+                speed_mach: d.get_item("speed_mach")?.map(|v| v.extract::<f64>()).transpose()?.unwrap_or(0.8),
+                alive:      d.get_item("alive")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(true),
+            })
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+
+    let n = weapons.len();
+    let mut engine = tot::TotEngine::new(k1, k2, r_comm_km, n);
+    engine.tick(&mut weapons, dt_s);
+    let rms = engine.rms_error(&weapons);
+
+    let results = weapons
+        .iter()
+        .map(|w| {
+            let dict = PyDict::new(_py);
+            dict.set_item("id", w.id)?;
+            dict.set_item("tau_i", w.tau_i)?;
+            dict.set_item("alive", w.alive)?;
+            Ok(dict.into())
+        })
+        .collect::<PyResult<Vec<PyObject>>>()?;
+
+    Ok((results, rms))
+}
+
+// ---------------------------------------------------------------------------
 // Saturation bindings
 // ---------------------------------------------------------------------------
 
@@ -98,6 +145,7 @@ fn ghost_engine(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(initiate_sturn, m)?)?;
     m.add_function(wrap_pyfunction!(haversine, m)?)?;
     m.add_function(wrap_pyfunction!(compute_bearing, m)?)?;
+    m.add_function(wrap_pyfunction!(tick_consensus, m)?)?;
     m.add_function(wrap_pyfunction!(run_saturation_monte_carlo, m)?)?;
     Ok(())
 }

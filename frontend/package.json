@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "copy-cesium": "mkdir -p public/cesium && cp -r node_modules/cesium/Build/Cesium/Assets public/cesium/Assets && cp -r node_modules/cesium/Build/Cesium/Workers public/cesium/Workers && cp -r node_modules/cesium/Build/Cesium/ThirdParty public/cesium/ThirdParty && cp -r node_modules/cesium/Build/Cesium/Widgets public/cesium/Widgets"
   },
   "dependencies": {
     "@types/d3": "^7.4.3",

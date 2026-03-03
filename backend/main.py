@@ -19,6 +19,7 @@ from core.entity_graph import EntityGraph, Entity, EntityType, DomainType, RelTy
 from core.event_queue import EventQueue, EventType
 from core.kdtree import SpatialManager
 from simulation.suda import SudaEngine
+from simulation.astar import astar_replan, ThreatRing, Vec3
 from api.routes.planner import router as planner_router
 
 # ---------------------------------------------------------------------------
@@ -262,6 +263,8 @@ async def _simulation_loop():
                 break
             if event.event_type == EventType.PHYSICS_TICK:
                 await _run_physics_tick()
+            elif event.event_type == EventType.TOT_UPDATED:
+                suda_engine.greedy_interval_schedule(event_queue.sim_time_ms)
             elif event.event_type == EventType.EVASION_END:
                 _handle_evasion_end(event.entity_id)
 
@@ -312,9 +315,9 @@ async def _run_physics_tick():
                 "alt_km_target": p.get("alt_km_target", 0.0),
             })
 
-        updated = ghost_engine.tick_weapons(weapon_dicts, TICK_INTERVAL_MS / 1000.0)
-        # Write back to entity graph
-        weapon_by_seq = {w.id: w for w in weapons}
+        dt_s = TICK_INTERVAL_MS / 1000.0
+        updated = ghost_engine.tick_weapons(weapon_dicts, dt_s)
+        # Write back physics results to entity graph
         for i, w in enumerate(weapons):
             if i < len(updated):
                 upd = updated[i]
@@ -331,6 +334,38 @@ async def _run_physics_tick():
 
                 if upd["suda_state"] == 4:  # DESTROYED
                     suda_engine.handle_weapon_destroyed(w.id, sim_time_ms)
+
+        # ToT consensus tick — distributed convergence (Rust TotEngine)
+        alive_weapons = [w for w in weapons if w.properties.get("suda_state") not in ("DESTROYED", "IMPACTED")]
+        if len(alive_weapons) >= 2:
+            consensus_inputs = []
+            id_map: dict[int, str] = {}
+            for w in alive_weapons:
+                p = w.properties
+                lat, lon = p.get("lat", 0.0), p.get("lon", 0.0)
+                tlat, tlon = p.get("target_lat", lat), p.get("target_lon", lon)
+                dist_km = _haversine_py(lat, lon, tlat, tlon)
+                speed_kmps = p.get("speed_mach", 0.8) * 0.299
+                tau_nom = dist_km / speed_kmps if speed_kmps > 0 else 0.0
+                seq_id = int(w.id.replace("-", ""), 16) & 0xFFFFFFFFFFFFFFFF
+                id_map[seq_id] = w.id
+                consensus_inputs.append({
+                    "id": seq_id,
+                    "lat": lat,
+                    "lon": lon,
+                    "tau_i": p.get("tau_i", 0.0),
+                    "tau_nom": tau_nom,
+                    "speed_mach": p.get("speed_mach", 0.8),
+                    "alive": True,
+                })
+            consensus_results, rms_error = ghost_engine.tick_consensus(
+                consensus_inputs, dt_s, 0.1, 0.05, 500.0
+            )
+            for r in consensus_results:
+                wid = id_map.get(r["id"])
+                if wid:
+                    graph.update_entity(wid, {"tau_i": r["tau_i"]})
+            await broadcast_entity_change("tot_rms", {"rms_error_s": rms_error})
 
     except ImportError:
         # Rust engine not compiled yet — pure Python fallback
@@ -394,12 +429,40 @@ def _bearing_py(lat1, lon1, lat2, lon2):
 
 def _handle_evasion_end(weapon_id: str):
     weapon = graph.get_entity(weapon_id)
-    if weapon and weapon.properties.get("suda_state") == "EVADING":
-        graph.update_entity(weapon_id, {
-            "suda_state": "REALIGNING",
-            "evasion_timer_s": 0.0,
-        })
-        event_queue.push_now(EventType.REALIGN_START, entity_id=weapon_id)
+    if not weapon or weapon.properties.get("suda_state") != "EVADING":
+        return
+
+    graph.update_entity(weapon_id, {
+        "suda_state": "REALIGNING",
+        "evasion_timer_s": 0.0,
+    })
+    event_queue.push_now(EventType.REALIGN_START, entity_id=weapon_id)
+
+    props = weapon.properties
+    current = Vec3(
+        lat=props.get("lat", 0.0),
+        lon=props.get("lon", 0.0),
+        alt_km=props.get("alt_km", 10.0),
+    )
+    target = Vec3(
+        lat=props.get("target_lat", props.get("lat", 0.0)),
+        lon=props.get("target_lon", props.get("lon", 0.0)),
+        alt_km=props.get("alt_km_target", 0.0),
+    )
+
+    active_threats = [
+        ThreatRing(
+            lat=t.properties.get("lat", 0.0),
+            lon=t.properties.get("lon", 0.0),
+            radius_km=t.properties.get("radius_km", 100.0),
+        )
+        for t in graph.all_entities(EntityType.THREAT)
+    ]
+
+    waypoints = astar_replan(current, target, active_threats)
+    graph.update_entity(weapon_id, {
+        "route_waypoints": [[wp.lat, wp.lon, wp.alt_km] for wp in waypoints],
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -453,6 +516,53 @@ def get_weapons_catalog():
         raise HTTPException(404, "Weapons catalog not found")
     with open(catalog_path) as f:
         return json.load(f)
+
+
+# ---------------------------------------------------------------------------
+# Saturation coefficient endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/saturation")
+def get_saturation():
+    """
+    Run Monte Carlo saturation analysis over current entity state.
+    Returns SC mean, penetration rate percentiles.
+    """
+    try:
+        import ghost_engine  # type: ignore
+    except ImportError:
+        return {
+            "error": "Rust engine not compiled",
+            "sc_mean": 0.0,
+            "penetration_rate_mean": 0.5,
+            "penetration_rate_p10": 0.3,
+            "penetration_rate_p50": 0.5,
+            "penetration_rate_p90": 0.7,
+            "trials_run": 0,
+        }
+
+    alive_weapons = [
+        w for w in graph.all_entities(EntityType.WEAPON)
+        if w.properties.get("suda_state") not in ("DESTROYED", "IMPACTED")
+    ]
+    threats = list(graph.all_entities(EntityType.THREAT))
+
+    if not alive_weapons:
+        return {
+            "sc_mean": 0.0, "penetration_rate_mean": 1.0,
+            "penetration_rate_p10": 1.0, "penetration_rate_p50": 1.0,
+            "penetration_rate_p90": 1.0, "trials_run": 0,
+        }
+
+    n_attacking = len(alive_weapons)
+    # Each threat battery: (n_interceptors=1, p_kill_base)
+    batteries = [(1, t.properties.get("p_intercept_base", 0.7)) for t in threats] or [(0, 0.0)]
+    weapon_evasion_p = [0.3 if w.properties.get("evasion_capable") else 0.0 for w in alive_weapons]
+    weapon_stealth = [0.5 if w.properties.get("stealth") else 1.0 for w in alive_weapons]
+
+    return ghost_engine.run_saturation_monte_carlo(
+        n_attacking, batteries, weapon_evasion_p, weapon_stealth, 1000
+    )
 
 
 # ---------------------------------------------------------------------------

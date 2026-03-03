@@ -160,24 +160,25 @@ impl TotEngine {
     }
 
     /// Compute RMS(τ_i − τ*) — displayed in the UI convergence chart.
-    /// τ* = mean of all alive τ_i values.
+    /// τ* = max of alive τ_i (slowest weapon sets the shared impact time).
     pub fn rms_error(&self, weapons: &[TotWeapon]) -> f64 {
         let alive: Vec<f64> = weapons.iter().filter(|w| w.alive).map(|w| w.tau_i).collect();
         if alive.is_empty() {
             return 0.0;
         }
-        let tau_star = alive.iter().sum::<f64>() / alive.len() as f64;
+        let tau_star = alive.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let mse = alive.iter().map(|t| (t - tau_star).powi(2)).sum::<f64>() / alive.len() as f64;
         mse.sqrt()
     }
 
-    /// τ* = consensus target (mean of alive τ_i values)
+    /// τ* = max of alive τ_i (slowest weapon defines the shared ToT)
     pub fn tau_star(&self, weapons: &[TotWeapon]) -> f64 {
-        let alive: Vec<f64> = weapons.iter().filter(|w| w.alive).map(|w| w.tau_i).collect();
-        if alive.is_empty() {
-            return 0.0;
-        }
-        alive.iter().sum::<f64>() / alive.len() as f64
+        weapons
+            .iter()
+            .filter(|w| w.alive)
+            .map(|w| w.tau_i)
+            .fold(f64::NEG_INFINITY, f64::max)
+            .max(0.0)
     }
 
     /// Check convergence: is RMS < threshold?
