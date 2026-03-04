@@ -14,3 +14,13 @@ body {
 *::after {
   box-sizing: border-box;
 }
+
+/* Force Cesium's internal widget + canvas to fill whatever container we give it */
+.cesium-widget,
+.cesium-widget canvas {
+  width: 100% !important;
+  height: 100% !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+}

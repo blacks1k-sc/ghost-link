@@ -17,8 +17,8 @@ export default function EngagementLog() {
   const { eventLog } = useEntityGraph();
 
   return (
-    <div className="h-full flex flex-col bg-gray-950">
-      <div className="flex items-center gap-2 px-3 py-1 border-b border-gray-800 shrink-0">
+    <div className="h-full flex flex-col bg-[#080e1a]">
+      <div className="flex items-center gap-2 px-3 py-1 border-b border-[#1a2a40] shrink-0">
         <span className="text-xs font-mono text-gray-400 uppercase tracking-widest">
           Engagement Log
         </span>

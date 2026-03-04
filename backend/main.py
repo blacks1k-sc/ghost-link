@@ -10,6 +10,10 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+# Load .env before anything else touches os.environ
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / ".env")
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel

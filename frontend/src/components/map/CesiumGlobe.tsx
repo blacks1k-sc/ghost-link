@@ -25,9 +25,10 @@ interface Props {
   mode: "planning" | "live";
   onEntitySelect: (id: string | null) => void;
   selectedEntityId: string | null;
+  grayscale?: boolean;
 }
 
-export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId }: Props) {
+export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, grayscale = false }: Props) {
   const viewerRef = useRef<CesiumType.Viewer | null>(null);
   const entityRefs = useRef<Map<string, CesiumType.Entity>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
@@ -35,8 +36,23 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId }: 
 
   const { entities, getWeapons, getTargets, getThreats, getAirbases } = useEntityGraph();
 
+  // Apply / remove grayscale CSS filter on the Cesium canvas
   useEffect(() => {
-    if (!containerRef.current || viewerRef.current) return;
+    const canvas = containerRef.current?.querySelector("canvas");
+    if (canvas) {
+      (canvas as HTMLCanvasElement).style.filter = grayscale
+        ? "grayscale(100%) contrast(3.5) brightness(0.42) saturate(0) drop-shadow(0 0 0 transparent)"
+        : "";
+    }
+  }, [grayscale]);
+
+  // initDoneRef is set to true BEFORE the async import, so it survives the
+  // StrictMode cleanup→remount cycle and blocks the second initialization.
+  const initDoneRef = useRef(false);
+
+  useEffect(() => {
+    if (!containerRef.current || viewerRef.current || initDoneRef.current) return;
+    initDoneRef.current = true;   // mark synchronously — not reset by cleanup
 
     import("cesium").then(async (Cesium) => {
       Cesium.Ion.defaultAccessToken =
@@ -59,18 +75,31 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId }: 
       });
 
       // ESRI World Imagery — satellite, no API key required
+      // Note: addImageryProvider() was removed in Cesium 1.104; use ImageryLayer wrapper
       const baseProvider = new Cesium.UrlTemplateImageryProvider({
         url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         maximumLevel: 19,
       });
-      viewer.imageryLayers.addImageryProvider(baseProvider);
+      viewer.imageryLayers.add(new Cesium.ImageryLayer(baseProvider));
 
       viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#050a12");
       viewer.scene.fog.enabled = false;
       viewer.scene.globe.enableLighting = false;
       viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#0a1628");
 
+      // Start zoomed in enough that the globe fills most of the viewport
+      viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(20, 25, 12_000_000),
+      });
+
       viewerRef.current = viewer;
+
+      // Force canvas to match container size immediately and on every resize
+      viewer.resize();
+      const ro = new ResizeObserver(() => { if (!viewer.isDestroyed()) viewer.resize(); });
+      ro.observe(containerRef.current!);
+      // Store observer so cleanup can disconnect it
+      (containerRef.current as HTMLDivElement & { _cesiumRO?: ResizeObserver })._cesiumRO = ro;
 
       const clickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 
@@ -113,6 +142,7 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId }: 
     });
 
     return () => {
+      (containerRef.current as HTMLDivElement & { _cesiumRO?: ResizeObserver })?._cesiumRO?.disconnect();
       if (viewerRef.current) {
         viewerRef.current.destroy();
         viewerRef.current = null;
@@ -334,7 +364,7 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId }: 
     }
   };
 
-  return <div ref={containerRef} className="w-full h-full" />;
+  return <div ref={containerRef} className="absolute inset-0" />;
 }
 
 function svgUri(svg: string) {

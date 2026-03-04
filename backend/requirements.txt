@@ -11,3 +11,4 @@ requests==2.32.3
 beautifulsoup4==4.12.3
 supabase>=2.0.0
 asyncpg>=0.29.0
+python-dotenv>=1.0.0

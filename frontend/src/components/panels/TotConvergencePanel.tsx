@@ -42,7 +42,7 @@ export default function TotConvergencePanel() {
     if (data.length < 2) return;
 
     import("d3").then((d3) => {
-      const W = 200, H = 80;
+      const W = 148, H = 72;
       const margin = { top: 6, right: 6, bottom: 16, left: 30 };
       const iW = W - margin.left - margin.right;
       const iH = H - margin.top - margin.bottom;
@@ -114,7 +114,7 @@ export default function TotConvergencePanel() {
     : 0;
 
   return (
-    <div className="bg-gray-950 border border-gray-800 rounded p-2">
+    <div className="bg-[#0a1628] border border-[#1a2a40] rounded p-2">
       <div className="text-gray-500 text-xs font-mono mb-1 flex justify-between">
         <span>TOT CONVERGENCE</span>
         <span className={rms < 2 ? "text-green-400" : "text-yellow-400"}>
