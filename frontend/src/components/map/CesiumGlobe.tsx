@@ -41,7 +41,7 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, gr
     const canvas = containerRef.current?.querySelector("canvas");
     if (canvas) {
       (canvas as HTMLCanvasElement).style.filter = grayscale
-        ? "grayscale(100%) contrast(3.5) brightness(0.42) saturate(0) drop-shadow(0 0 0 transparent)"
+        ? "grayscale(100%) contrast(1.6) brightness(0.75) saturate(0)"
         : "";
     }
   }, [grayscale]);
@@ -69,23 +69,22 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, gr
         selectionIndicator: false,
         timeline: false,
         navigationHelpButton: false,
-        skyBox: false,
-        skyAtmosphere: false,
+        // skyBox + skyAtmosphere left as defaults — shows starfield + atmosphere halo on globe
         baseLayer: false,
       });
 
-      // ESRI World Imagery — satellite, no API key required
-      // Note: addImageryProvider() was removed in Cesium 1.104; use ImageryLayer wrapper
+      // CartoDB Dark Matter — dark tactical map, country borders + labels, no API key required
       const baseProvider = new Cesium.UrlTemplateImageryProvider({
-        url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        url: "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
         maximumLevel: 19,
+        credit: "© CARTO © OpenStreetMap contributors",
       });
       viewer.imageryLayers.add(new Cesium.ImageryLayer(baseProvider));
 
-      viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#050a12");
+      viewer.scene.backgroundColor = Cesium.Color.BLACK;
       viewer.scene.fog.enabled = false;
       viewer.scene.globe.enableLighting = false;
-      viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#0a1628");
+      viewer.scene.globe.baseColor = Cesium.Color.BLACK;
 
       // Start zoomed in enough that the globe fills most of the viewport
       viewer.camera.setView({
