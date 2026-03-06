@@ -21,30 +21,39 @@ const SUDA_COLORS: Record<string, string> = {
   IMPACTED: "#10b981",
 };
 
+interface PendingWeapon {
+  name: string;
+  domain: string;
+  speed_mach: number;
+  cruise_altitude_m: [number, number];
+  stealth: boolean;
+  evasion_capable: boolean;
+}
+
 interface Props {
   mode: "planning" | "live";
   onEntitySelect: (id: string | null) => void;
   selectedEntityId: string | null;
-  grayscale?: boolean;
+  pendingWeapon?: PendingWeapon | null;
+  onWeaponPlaced?: () => void;
 }
 
-export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, grayscale = false }: Props) {
+export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pendingWeapon = null, onWeaponPlaced }: Props) {
   const viewerRef = useRef<CesiumType.Viewer | null>(null);
   const entityRefs = useRef<Map<string, CesiumType.Entity>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
 
+  // Refs so stale-closure click handler always sees latest prop values
+  const modeRef = useRef(mode);
+  const pendingWeaponRef = useRef(pendingWeapon);
+  const onWeaponPlacedRef = useRef(onWeaponPlaced);
+
   const { entities, getWeapons, getTargets, getThreats, getAirbases } = useEntityGraph();
 
-  // Apply / remove grayscale CSS filter on the Cesium canvas
-  useEffect(() => {
-    const canvas = containerRef.current?.querySelector("canvas");
-    if (canvas) {
-      (canvas as HTMLCanvasElement).style.filter = grayscale
-        ? "grayscale(100%) contrast(1.6) brightness(0.75) saturate(0)"
-        : "";
-    }
-  }, [grayscale]);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { pendingWeaponRef.current = pendingWeapon; }, [pendingWeapon]);
+  useEffect(() => { onWeaponPlacedRef.current = onWeaponPlaced; }, [onWeaponPlaced]);
 
   // initDoneRef is set to true BEFORE the async import, so it survives the
   // StrictMode cleanup→remount cycle and blocks the second initialization.
@@ -98,25 +107,37 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, gr
       const ro = new ResizeObserver(() => { if (!viewer.isDestroyed()) viewer.resize(); });
       ro.observe(containerRef.current!);
 
-      // Country borders — red polygon outlines
-      // NOTE: clampToGround must be false — GroundPrimitive drops polygon outlines entirely
+      // Country borders — polygon outlines are unreliable in Cesium; convert to polylines instead
+      const borderDs = new Cesium.CustomDataSource("country-borders");
+      viewer.dataSources.add(borderDs);
       Cesium.GeoJsonDataSource.load(
-        "https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_110m_admin_0_countries.geojson",
+        "https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@v5.1.2/geojson/ne_110m_admin_0_countries.geojson",
       ).then((ds) => {
+        if (viewer.isDestroyed()) return;
         const red = Cesium.Color.fromCssColorString("#ef4444").withAlpha(0.9);
+        const now = Cesium.JulianDate.now();
+        const addLine = (pts: CesiumType.Cartesian3[]) => {
+          if (pts.length < 2) return;
+          borderDs.entities.add({
+            polyline: {
+              positions: [...pts, pts[0]],
+              material: red,
+              width: 1.5,
+              clampToGround: true,
+            },
+          });
+        };
         ds.entities.values.forEach((entity) => {
-          if (entity.polygon) {
-            entity.polygon.material = new Cesium.ColorMaterialProperty(
-              Cesium.Color.TRANSPARENT,
-            );
-            entity.polygon.outline = new Cesium.ConstantProperty(true);
-            entity.polygon.outlineColor = new Cesium.ConstantProperty(red);
-            entity.polygon.outlineWidth = new Cesium.ConstantProperty(2.0);
-            entity.polygon.height = new Cesium.ConstantProperty(0);
-          }
+          if (!entity.polygon) return;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const hier = (entity.polygon.hierarchy as any)?.getValue(now);
+          if (!hier) return;
+          addLine(hier.positions);
+          (hier.holes ?? []).forEach((h: { positions: CesiumType.Cartesian3[] }) =>
+            addLine(h.positions),
+          );
         });
-        if (!viewer.isDestroyed()) viewer.dataSources.add(ds);
-      }).catch((e) => console.error("Country borders failed to load:", e));
+      }).catch((e: unknown) => console.error("Country borders load failed:", e));
       // Store observer so cleanup can disconnect it
       (containerRef.current as HTMLDivElement & { _cesiumRO?: ResizeObserver })._cesiumRO = ro;
 
@@ -128,7 +149,7 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, gr
           const entityId = (picked.id as CesiumType.Entity).name;
           if (entityId) onEntitySelect(entityId);
         } else {
-          if (mode === "planning") {
+          if (modeRef.current === "planning") {
             const cartesian = viewer.camera.pickEllipsoid(
               click.position,
               viewer.scene.globe.ellipsoid,
@@ -137,7 +158,11 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, gr
               const carto = Cesium.Cartographic.fromCartesian(cartesian);
               const lat = Cesium.Math.toDegrees(carto.latitude);
               const lon = Cesium.Math.toDegrees(carto.longitude);
-              placeTarget(lat, lon);
+              if (pendingWeaponRef.current) {
+                placeWeapon(lat, lon);
+              } else {
+                placeTarget(lat, lon);
+              }
             }
           }
         }
@@ -179,6 +204,32 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, gr
         properties: { lat, lon, alt_km: 0, label: `Target ${Date.now()}` },
       }),
     });
+  }, []);
+
+  const placeWeapon = useCallback(async (lat: number, lon: number) => {
+    const w = pendingWeaponRef.current;
+    if (!w) return;
+    await fetch(`${API}/entities`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "WEAPON",
+        domain: w.domain,
+        properties: {
+          lat,
+          lon,
+          alt_km: (w.cruise_altitude_m?.[0] ?? 0) / 1000,
+          weapon_type: w.name,
+          speed_mach: w.speed_mach,
+          fuel_remaining_pct: 1.0,
+          tau_i: 0.0,
+          suda_state: "CRUISE",
+          evasion_capable: w.evasion_capable,
+          stealth: w.stealth,
+        },
+      }),
+    });
+    onWeaponPlacedRef.current?.();
   }, []);
 
   const showThreatMenu = useCallback(
@@ -383,7 +434,13 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, gr
     }
   };
 
-  return <div ref={containerRef} className="absolute inset-0" />;
+  return (
+    <div
+      ref={containerRef}
+      className="absolute inset-0"
+      style={{ cursor: pendingWeapon ? "crosshair" : undefined }}
+    />
+  );
 }
 
 function svgUri(svg: string) {

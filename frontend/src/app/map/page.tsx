@@ -19,7 +19,6 @@ const CesiumGlobe = dynamic(() => import("@/components/map/CesiumGlobe"), {
 export default function MapPage() {
   useEntityWebSocket();
 
-  const [grayscale, setGrayscale] = useState(false);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const { wsConnected, simRunning, simTimeS, getWeapons, getTargets, getThreats } = useEntityGraph();
 
@@ -45,7 +44,6 @@ export default function MapPage() {
           mode="live"
           onEntitySelect={setSelectedEntityId}
           selectedEntityId={selectedEntityId}
-          grayscale={grayscale}
         />
       </div>
 
@@ -75,23 +73,6 @@ export default function MapPage() {
             </span>
           )}
         </div>
-
-        <div className="flex-1" />
-
-        {/* B&W toggle */}
-        <div className="pointer-events-auto">
-          <button
-            onClick={() => setGrayscale((v) => !v)}
-            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-mono rounded border transition-colors ${
-              grayscale
-                ? "border-gray-400 bg-gray-800/90 text-white"
-                : "border-[#1a2a40] bg-[#080e1a]/90 text-gray-400 hover:text-white hover:border-gray-500"
-            }`}
-          >
-            <span className="text-base leading-none">{grayscale ? "◑" : "●"}</span>
-            {grayscale ? "COLOR" : "B&W"}
-          </button>
-        </div>
       </div>
 
       {/* ── BOTTOM-LEFT: asset counts (floating) ─────────────────────── */}
@@ -111,13 +92,6 @@ export default function MapPage() {
         </div>
       </div>
 
-      {/* ── MAP MODE label (floating top-right corner) ───────────────── */}
-      <div className="absolute top-12 right-3 z-20 pointer-events-none">
-        <span className="text-xs font-mono text-gray-700 tracking-widest uppercase">
-          {grayscale ? "TACTICAL / B&W" : "SATELLITE / COLOR"}
-        </span>
-      </div>
-
       {/* ── ENTITY INSPECTOR (floating right panel on entity click) ─── */}
       {selectedEntityId && (
         <div className="absolute top-12 right-3 bottom-4 z-20 w-64 bg-[#080e1a]/95 border border-[#1a2a40] rounded overflow-y-auto backdrop-blur-sm">
@@ -130,4 +104,3 @@ export default function MapPage() {
     </div>
   );
 }
-
