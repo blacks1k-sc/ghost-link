@@ -97,6 +97,26 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, gr
       viewer.resize();
       const ro = new ResizeObserver(() => { if (!viewer.isDestroyed()) viewer.resize(); });
       ro.observe(containerRef.current!);
+
+      // Country borders — red polygon outlines
+      // NOTE: clampToGround must be false — GroundPrimitive drops polygon outlines entirely
+      Cesium.GeoJsonDataSource.load(
+        "https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_110m_admin_0_countries.geojson",
+      ).then((ds) => {
+        const red = Cesium.Color.fromCssColorString("#ef4444").withAlpha(0.9);
+        ds.entities.values.forEach((entity) => {
+          if (entity.polygon) {
+            entity.polygon.material = new Cesium.ColorMaterialProperty(
+              Cesium.Color.TRANSPARENT,
+            );
+            entity.polygon.outline = new Cesium.ConstantProperty(true);
+            entity.polygon.outlineColor = new Cesium.ConstantProperty(red);
+            entity.polygon.outlineWidth = new Cesium.ConstantProperty(2.0);
+            entity.polygon.height = new Cesium.ConstantProperty(0);
+          }
+        });
+        if (!viewer.isDestroyed()) viewer.dataSources.add(ds);
+      }).catch((e) => console.error("Country borders failed to load:", e));
       // Store observer so cleanup can disconnect it
       (containerRef.current as HTMLDivElement & { _cesiumRO?: ResizeObserver })._cesiumRO = ro;
 
