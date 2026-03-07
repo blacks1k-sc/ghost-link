@@ -361,9 +361,9 @@ async def generate_plan(
             "weapon_type": r.weapon_type,
             "target_id": r.target_id,
             "airbase_id": r.airbase_id,
-            "feasible": r.feasible,
-            "distance_km": round(r.distance_km, 1),
-            "flight_time_s": round(r.flight_time_s, 0),
+            "feasible": bool(r.feasible),
+            "distance_km": float(round(r.distance_km, 1)),
+            "flight_time_s": float(round(r.flight_time_s, 0)),
         }
         for r in assignment_results
     ]

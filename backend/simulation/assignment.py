@@ -180,7 +180,7 @@ def assign_weapons_to_targets(
             target_id=target.target_id,
             flight_time_s=_flight_time_s(dist_km, weapon.speed_kmh),
             distance_km=dist_km,
-            feasible=cost < INFEASIBLE_COST,
+            feasible=bool(cost < INFEASIBLE_COST),
         ))
 
     return results
