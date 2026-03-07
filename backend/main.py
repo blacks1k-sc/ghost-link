@@ -14,8 +14,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env")
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Any
 
@@ -102,15 +103,35 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="GHOST-LINK C2 Simulation API", version="0.1.0", lifespan=lifespan)
 
-app.include_router(planner_router)
-
+# CORS must be registered BEFORE include_router so it wraps the full ASGI stack.
+# Also allow any localhost port so dev servers on :3000/:3001/etc all work.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(planner_router)
+
+
+# Unhandled 500s bypass CORSMiddleware in Starlette — this handler re-adds the header.
+@app.exception_handler(Exception)
+async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled error: %s", exc)
+    origin = request.headers.get("origin", "")
+    headers = {"Access-Control-Allow-Origin": origin} if origin else {}
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {exc}"},
+        headers=headers,
+    )
 
 # ---------------------------------------------------------------------------
 # WebSocket endpoint — real-time entity push

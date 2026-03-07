@@ -194,43 +194,64 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
     };
   }, []);
 
-  const placeTarget = useCallback(async (lat: number, lon: number) => {
-    await fetch(`${API}/entities`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "TARGET",
-        domain: "LAND",
-        properties: { lat, lon, alt_km: 0, label: `Target ${Date.now()}` },
-      }),
-    });
+  const showFetchError = useCallback((msg: string) => {
+    if (!containerRef.current) return;
+    const el = document.createElement("div");
+    el.style.cssText =
+      "position:absolute;top:1rem;left:50%;transform:translateX(-50%);z-index:9999;" +
+      "background:rgba(69,10,10,0.97);border:1px solid #b91c1c;border-radius:6px;" +
+      "padding:0.5rem 1.2rem;font-family:monospace;font-size:11px;color:#fca5a5;" +
+      "pointer-events:none;white-space:nowrap;";
+    el.textContent = `⚠ ${msg}`;
+    containerRef.current.appendChild(el);
+    setTimeout(() => el.remove(), 3500);
   }, []);
+
+  const placeTarget = useCallback(async (lat: number, lon: number) => {
+    try {
+      await fetch(`${API}/entities`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "TARGET",
+          domain: "LAND",
+          properties: { lat, lon, alt_km: 0, label: `Target ${Date.now()}` },
+        }),
+      });
+    } catch {
+      showFetchError("Backend unreachable — start the server on :8000");
+    }
+  }, [showFetchError]);
 
   const placeWeapon = useCallback(async (lat: number, lon: number) => {
     const w = pendingWeaponRef.current;
     if (!w) return;
-    await fetch(`${API}/entities`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "WEAPON",
-        domain: w.domain,
-        properties: {
-          lat,
-          lon,
-          alt_km: (w.cruise_altitude_m?.[0] ?? 0) / 1000,
-          weapon_type: w.name,
-          speed_mach: w.speed_mach,
-          fuel_remaining_pct: 1.0,
-          tau_i: 0.0,
-          suda_state: "CRUISE",
-          evasion_capable: w.evasion_capable,
-          stealth: w.stealth,
-        },
-      }),
-    });
-    onWeaponPlacedRef.current?.();
-  }, []);
+    try {
+      await fetch(`${API}/entities`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "WEAPON",
+          domain: w.domain,
+          properties: {
+            lat,
+            lon,
+            alt_km: (w.cruise_altitude_m?.[0] ?? 0) / 1000,
+            weapon_type: w.name,
+            speed_mach: w.speed_mach,
+            fuel_remaining_pct: 1.0,
+            tau_i: 0.0,
+            suda_state: "CRUISE",
+            evasion_capable: w.evasion_capable,
+            stealth: w.stealth,
+          },
+        }),
+      });
+      onWeaponPlacedRef.current?.();
+    } catch {
+      showFetchError("Backend unreachable — start the server on :8000");
+    }
+  }, [showFetchError]);
 
   const showThreatMenu = useCallback(
     (lat: number, lon: number, screenPos: { x: number; y: number }) => {

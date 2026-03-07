@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { useEntityWebSocket } from "@/hooks/useWebSocket";
 import { useEntityGraph } from "@/stores/entityGraph";
 import EngagementLog from "@/components/panels/EngagementLog";
@@ -38,6 +38,23 @@ interface WeaponCatalogItem {
   stealth: boolean;
   evasion_capable: boolean;
   guidance: string[];
+}
+
+interface PlatformCatalogItem {
+  id: string;
+  name: string;
+  full_name: string;
+  domain: "AIR" | "SEA" | "LAND";
+  type: string;
+  country: string;
+  range_km: number;
+  speed_mach: number;
+  payload_kg?: number;
+  stealth: boolean;
+  compatible_weapons?: string[];
+  crew?: number;
+  refuelable?: boolean;
+  icon?: string;
 }
 
 type PendingWeapon = Pick<
@@ -319,18 +336,25 @@ function AssetsPanel({
   const [tab, setTab] = useState<"WEAPONS" | "TARGETS">("WEAPONS");
   const [domain, setDomain] = useState<"AIR" | "SEA" | "LAND">("AIR");
   const [catalog, setCatalog] = useState<WeaponCatalogItem[]>([]);
+  const [platforms, setPlatforms] = useState<PlatformCatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [targetForm, setTargetForm] = useState({ lat: "", lon: "", label: "" });
   const [placing, setPlacing] = useState(false);
+  const [selectedWeapon, setSelectedWeapon] = useState<WeaponCatalogItem | null>(null);
 
   useEffect(() => {
     fetch(`${API}/weapons/catalog`)
       .then((r) => r.json())
-      .then((data) => { setCatalog(data.weapons ?? []); setLoading(false); })
+      .then((data) => {
+        setCatalog(data.weapons ?? []);
+        setPlatforms(data.platforms ?? []);
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
   }, []);
 
   const filtered = catalog.filter((w) => w.domain === domain);
+  const filteredPlatforms = platforms.filter((p) => p.domain === domain);
 
   const handlePlaceTarget = async () => {
     const lat = parseFloat(targetForm.lat);
@@ -389,7 +413,7 @@ function AssetsPanel({
             ] as const).map(({ key, icon, active }) => (
               <button
                 key={key}
-                onClick={() => setDomain(key)}
+                onClick={() => { setDomain(key); setSelectedWeapon(null); }}
                 className={`flex-1 py-1.5 text-xs font-mono tracking-wider transition-colors border-b-2 ${
                   domain === key ? `${active} border-b-2` : "text-gray-600 hover:text-gray-400 border-transparent"
                 }`}
@@ -408,20 +432,122 @@ function AssetsPanel({
             </span>
           </div>
 
-          {/* Weapon cards */}
-          <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {loading ? (
-              <div className="text-gray-600 font-mono text-xs p-4 text-center tracking-widest animate-pulse">
-                LOADING CATALOG…
+          {/* ── STEP 2: Platform picker (replaces list when a weapon is selected) ── */}
+          {selectedWeapon ? (
+            <div className="flex flex-col flex-1 overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#1a2a40] bg-[#060c18] shrink-0">
+                <div>
+                  <div className="text-[9px] font-mono text-gray-600 tracking-widest mb-0.5 uppercase">
+                    Select Launch Platform
+                  </div>
+                  <div className="text-blue-300 font-mono text-xs font-bold">{selectedWeapon.name}</div>
+                  <div className="text-gray-600 font-mono text-[9px] mt-0.5">
+                    M{selectedWeapon.speed_mach} · {selectedWeapon.range_km} km range
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedWeapon(null)}
+                  className="text-gray-600 hover:text-white text-sm leading-none self-start mt-0.5"
+                  title="Back to weapons"
+                >
+                  ✕
+                </button>
               </div>
-            ) : filtered.length === 0 ? (
-              <div className="text-gray-600 font-mono text-xs p-3">No {domain} weapons in catalog.</div>
-            ) : (
-              filtered.map((w) => (
-                <WeaponCard key={w.id} weapon={w} onDeploy={() => onSetPendingWeapon(w)} />
-              ))
-            )}
-          </div>
+
+              {/* Compatible platform list */}
+              <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                {platforms
+                  .filter((p) => p.compatible_weapons?.includes(selectedWeapon.id))
+                  .map((platform) => (
+                    <PlatformCard
+                      key={platform.id}
+                      platform={platform}
+                      deployLabel={`DEPLOY WITH ${platform.name.split(" ")[0].toUpperCase()}`}
+                      onDeploy={() => {
+                        onSetPendingWeapon({
+                          name: `${platform.name} / ${selectedWeapon.name}`,
+                          domain: selectedWeapon.domain,
+                          speed_mach: selectedWeapon.speed_mach,
+                          cruise_altitude_m: selectedWeapon.cruise_altitude_m,
+                          stealth: selectedWeapon.stealth,
+                          evasion_capable: selectedWeapon.evasion_capable,
+                        });
+                        setSelectedWeapon(null);
+                      }}
+                    />
+                  ))}
+              </div>
+            </div>
+
+          ) : (
+            /* ── STEP 1: Grouped accordion list ── */
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              {loading ? (
+                <div className="text-gray-600 font-mono text-xs p-4 text-center tracking-widest animate-pulse">
+                  LOADING CATALOG…
+                </div>
+              ) : (
+                <>
+                  {/* Munitions grouped by type */}
+                  {groupBy(filtered, (w) => w.type).size === 0 && filteredPlatforms.length === 0 && (
+                    <div className="text-gray-600 font-mono text-xs p-3">Nothing in {domain} catalog.</div>
+                  )}
+                  {Array.from(groupBy(filtered, (w) => w.type).entries()).map(([type, group], i) => (
+                    <CategoryAccordion
+                      key={type}
+                      label={TYPE_LABEL[type] ?? type.replace(/_/g, " ")}
+                      count={group.length}
+                      defaultOpen={i === 0}
+                    >
+                      {group.map((w) => {
+                        const hasCompatiblePlatforms = platforms.some(
+                          (p) => p.compatible_weapons?.includes(w.id),
+                        );
+                        return (
+                          <WeaponCard
+                            key={w.id}
+                            weapon={w}
+                            requiresPlatform={hasCompatiblePlatforms}
+                            onDeploy={() =>
+                              hasCompatiblePlatforms ? setSelectedWeapon(w) : onSetPendingWeapon(w)
+                            }
+                          />
+                        );
+                      })}
+                    </CategoryAccordion>
+                  ))}
+
+                  {/* Standalone platforms (deploy aircraft without a specific weapon) */}
+                  {filteredPlatforms.length > 0 &&
+                    Array.from(groupBy(filteredPlatforms, (p) => p.type).entries()).map(([type, group]) => (
+                      <CategoryAccordion
+                        key={type}
+                        label={TYPE_LABEL[type] ?? type.replace(/^PLATFORM_/, "").replace(/_/g, " ")}
+                        count={group.length}
+                      >
+                        {group.map((p) => (
+                          <PlatformCard
+                            key={p.id}
+                            platform={p}
+                            onDeploy={() =>
+                              onSetPendingWeapon({
+                                name: p.name,
+                                domain: p.domain,
+                                speed_mach: p.speed_mach,
+                                cruise_altitude_m: [8000, 12000],
+                                stealth: p.stealth,
+                                evasion_capable: true,
+                              })
+                            }
+                          />
+                        ))}
+                      </CategoryAccordion>
+                    ))}
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -500,7 +626,165 @@ const DOMAIN_STYLE = {
   },
 } as const;
 
-function WeaponCard({ weapon, onDeploy }: { weapon: WeaponCatalogItem; onDeploy: () => void }) {
+// ── Accordion helpers ─────────────────────────────────────────────────────────
+
+function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
+  const map = new Map<string, T[]>();
+  for (const item of items) {
+    const k = key(item);
+    const arr = map.get(k) ?? [];
+    arr.push(item);
+    map.set(k, arr);
+  }
+  return map;
+}
+
+const TYPE_LABEL: Record<string, string> = {
+  CRUISE_MISSILE:       "Cruise Missiles",
+  ANTI_SHIP_MISSILE:    "Anti-Ship Missiles",
+  HYPERSONIC_MISSILE:   "Hypersonic Missiles",
+  BALLISTIC_MISSILE:    "Ballistic Missiles",
+  QUASI_BALLISTIC:      "Quasi-Ballistic Missiles",
+  PLATFORM_FIGHTER:     "Fighters",
+  PLATFORM_BOMBER:      "Bombers",
+  PLATFORM_TANKER:      "Tankers",
+  PLATFORM_EW:          "EW Aircraft",
+  PLATFORM_DESTROYER:   "Destroyers",
+  PLATFORM_CRUISER:     "Cruisers",
+  PLATFORM_SUBMARINE:   "Submarines",
+};
+
+function CategoryAccordion({
+  label,
+  count,
+  defaultOpen = false,
+  children,
+}: {
+  label: string;
+  count: number;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div className="border border-[#1a2a40] rounded overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-mono tracking-widest hover:bg-[#0f1828] transition-colors"
+      >
+        <span className="flex items-center gap-2">
+          <span className={`text-gray-600 transition-transform duration-150 ${open ? "rotate-90" : ""}`}>▶</span>
+          <span className="text-gray-300 uppercase">{label}</span>
+        </span>
+        <span className="text-gray-600 text-[9px] bg-[#0a1628] border border-[#1a2a40] px-1.5 py-0.5 rounded">
+          {count}
+        </span>
+      </button>
+      {open && (
+        <div className="p-2 space-y-2 border-t border-[#1a2a40] bg-[#060c18]">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── PlatformCard ──────────────────────────────────────────────────────────────
+
+function PlatformCard({
+  platform,
+  onDeploy,
+  deployLabel,
+}: {
+  platform: PlatformCatalogItem;
+  onDeploy: () => void;
+  deployLabel?: string;
+}) {
+  const typeLabel = (TYPE_LABEL[platform.type] ?? platform.type.replace(/^PLATFORM_/, "").replace(/_/g, " ")).toUpperCase();
+
+  return (
+    <div className="bg-[#090f1e] border border-[#1e2e48] hover:border-[#2a4060] rounded p-2.5 transition-colors">
+
+      {/* Name + type badge */}
+      <div className="flex items-start justify-between gap-1 mb-0.5">
+        <span className="text-white font-mono text-xs font-bold leading-tight">{platform.name}</span>
+        <span className="shrink-0 text-[9px] font-mono px-1 py-0.5 border rounded text-blue-300 border-blue-900 bg-blue-950/30">
+          {typeLabel}
+        </span>
+      </div>
+
+      {/* Full name */}
+      <div className="text-gray-600 font-mono text-[10px] leading-tight mb-2 truncate" title={platform.full_name}>
+        {platform.full_name}
+      </div>
+
+      {/* Stats */}
+      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+        <span className="text-[10px] font-mono">
+          <span className="text-gray-600">M </span>
+          <span className="text-gray-300">{platform.speed_mach}</span>
+        </span>
+        <span className="text-gray-700">·</span>
+        <span className="text-[10px] font-mono">
+          <span className="text-gray-600">RNG </span>
+          <span className="text-gray-300">{platform.range_km} km</span>
+        </span>
+        {platform.payload_kg != null && (
+          <>
+            <span className="text-gray-700">·</span>
+            <span className="text-[10px] font-mono">
+              <span className="text-gray-600">PLD </span>
+              <span className="text-gray-300">{(platform.payload_kg / 1000).toFixed(0)}t</span>
+            </span>
+          </>
+        )}
+        {platform.stealth && (
+          <span className="text-[9px] font-mono px-1 py-0.5 border rounded text-purple-400 border-purple-900 bg-purple-950/40">
+            STEALTH
+          </span>
+        )}
+        {platform.refuelable && (
+          <span className="text-[9px] font-mono px-1 py-0.5 border rounded text-sky-400 border-sky-900 bg-sky-950/30">
+            TANKER
+          </span>
+        )}
+      </div>
+
+      {/* Country */}
+      <div className="text-gray-600 font-mono text-[10px] mb-2">
+        {platform.country}{platform.crew != null ? ` · ${platform.crew}-crew` : ""}
+      </div>
+
+      {/* Compatible weapons */}
+      {platform.compatible_weapons && platform.compatible_weapons.length > 0 && (
+        <div className="text-gray-700 font-mono text-[10px] mb-2 truncate">
+          Arms: {platform.compatible_weapons.slice(0, 3).join(", ")}
+        </div>
+      )}
+
+      {/* Deploy button */}
+      <button
+        onClick={onDeploy}
+        className="w-full py-1 text-[10px] font-mono border rounded tracking-widest transition-colors border-blue-900 bg-blue-950/30 hover:bg-blue-900/50 text-blue-300"
+      >
+        {deployLabel ?? "⊕  PLACE ON MAP"}
+      </button>
+    </div>
+  );
+}
+
+// ── WeaponCard ────────────────────────────────────────────────────────────────
+
+function WeaponCard({
+  weapon,
+  onDeploy,
+  requiresPlatform = false,
+}: {
+  weapon: WeaponCatalogItem;
+  onDeploy: () => void;
+  requiresPlatform?: boolean;
+}) {
   const style = DOMAIN_STYLE[weapon.domain] ?? DOMAIN_STYLE.AIR;
 
   return (
@@ -559,7 +843,7 @@ function WeaponCard({ weapon, onDeploy }: { weapon: WeaponCatalogItem; onDeploy:
         onClick={onDeploy}
         className={`w-full py-1 text-[10px] font-mono border rounded tracking-widest transition-colors ${style.btn}`}
       >
-        ⊕  PLACE ON MAP
+        {requiresPlatform ? "▶  SELECT PLATFORM" : "⊕  PLACE ON MAP"}
       </button>
     </div>
   );
