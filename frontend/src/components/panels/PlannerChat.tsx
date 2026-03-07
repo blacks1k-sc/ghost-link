@@ -69,9 +69,10 @@ export default function PlannerChat() {
 
   // ── add target ─────────────────────────────────────────────────────────────
   const handleAddTarget = async () => {
-    const lat = parseFloat(tLat);
-    const lon = parseFloat(tLon);
-    if (isNaN(lat) || isNaN(lon)) return;
+    // Strip trailing E/e (scientific notation remnant from number inputs)
+    const lat = parseFloat(tLat.replace(/[Ee]$/, ""));
+    const lon = parseFloat(tLon.replace(/[Ee]$/, ""));
+    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
     const label = tLabel.trim() || `Target ${Date.now()}`;
     setAddingTarget(true);
 
@@ -253,23 +254,27 @@ export default function PlannerChat() {
           />
           <div className="flex gap-1">
             <input
-              type="number"
-              placeholder="Lat"
+              type="text"
+              inputMode="decimal"
+              placeholder="Lat (−90 to 90)"
               value={tLat}
               onChange={(e) => setTLat(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleAddTarget(); }}
               className="w-1/2 bg-[#0a1628] border border-[#1a2a40] focus:border-red-900 rounded px-2 py-1 text-[11px] text-white placeholder-gray-700 outline-none"
             />
             <input
-              type="number"
-              placeholder="Lon"
+              type="text"
+              inputMode="decimal"
+              placeholder="Lon (−180 to 180)"
               value={tLon}
               onChange={(e) => setTLon(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleAddTarget(); }}
               className="w-1/2 bg-[#0a1628] border border-[#1a2a40] focus:border-red-900 rounded px-2 py-1 text-[11px] text-white placeholder-gray-700 outline-none"
             />
           </div>
           <button
             onClick={handleAddTarget}
-            disabled={addingTarget || !tLat || !tLon}
+            disabled={addingTarget || isNaN(parseFloat(tLat)) || isNaN(parseFloat(tLon))}
             className="w-full py-1 text-[10px] font-mono border border-red-900 bg-red-950/40 hover:bg-red-900/50 text-red-300 rounded tracking-widest transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {addingTarget ? "ADDING…" : "⊕  ADD TARGET"}
