@@ -26,6 +26,7 @@ interface Route {
   weapon_type: string;
   target_id: string;
   airbase_id: string;
+  waypoints: Array<{ lat: number; lon: number; label: string }>;
   total_dist_km: number;
   total_time_s: number;
   uses_tanker: boolean;

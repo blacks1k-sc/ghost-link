@@ -60,6 +60,12 @@ interface PlatformCatalogItem {
 interface PlanHighlights {
   airbases: Array<{ id: string; name: string; lat: number; lon: number }>;
   carriers: Array<{ lat: number; lon: number; label: string }>;
+  routes: Array<{
+    weapon_type: string;
+    waypoints: Array<{ lat: number; lon: number; label: string }>;
+    total_dist_km: number;
+    total_time_s: number;
+  }>;
 }
 
 type PendingWeapon = Pick<
@@ -238,7 +244,16 @@ export default function KineticPage() {
               <PlannerChat
                 onPlanResult={(p) =>
                   setPlanHighlights(
-                    p ? { airbases: p.suggested_airbases, carriers: p.carrier_positions } : null
+                    p ? {
+                      airbases: p.suggested_airbases,
+                      carriers: p.carrier_positions,
+                      routes: p.routes.map((r) => ({
+                        weapon_type: r.weapon_type,
+                        waypoints: r.waypoints,
+                        total_dist_km: r.total_dist_km,
+                        total_time_s: r.total_time_s,
+                      })),
+                    } : null
                   )
                 }
               />

@@ -33,7 +33,25 @@ interface PendingWeapon {
 interface PlanHighlights {
   airbases: Array<{ id: string; name: string; lat: number; lon: number }>;
   carriers: Array<{ lat: number; lon: number; label: string }>;
+  routes: Array<{
+    weapon_type: string;
+    waypoints: Array<{ lat: number; lon: number; label: string }>;
+    total_dist_km: number;
+    total_time_s: number;
+  }>;
 }
+
+// Distinct neon colors cycled per route
+const ROUTE_COLORS = [
+  "#f97316", // orange
+  "#a855f7", // purple
+  "#06b6d4", // cyan
+  "#84cc16", // lime
+  "#f43f5e", // rose
+  "#fbbf24", // amber
+  "#3b82f6", // blue
+  "#10b981", // emerald
+];
 
 interface Props {
   mode: "planning" | "live";
@@ -517,6 +535,63 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
           },
         });
         planHighlightRefs.current.push(ring, icon);
+      }
+
+      // ── Route polylines ─────────────────────────────────────────────────────
+      for (let i = 0; i < (planHighlights.routes ?? []).length; i++) {
+        const route = planHighlights.routes[i];
+        if (!route.waypoints || route.waypoints.length < 2) continue;
+        const hex = ROUTE_COLORS[i % ROUTE_COLORS.length];
+        const color = Cesium.Color.fromCssColorString(hex);
+        const mins = Math.round(route.total_time_s / 60);
+
+        const positions = route.waypoints.map((wp) =>
+          Cesium.Cartesian3.fromDegrees(wp.lon, wp.lat, 8000),
+        );
+
+        // Glowing outer line (wider, dimmer)
+        const glow = viewer.entities.add({
+          polyline: {
+            positions,
+            width: 4,
+            material: new Cesium.PolylineGlowMaterialProperty({
+              glowPower: 0.25,
+              color: color.withAlpha(0.5),
+            }),
+            clampToGround: false,
+          },
+        });
+
+        // Crisp inner line
+        const line = viewer.entities.add({
+          polyline: {
+            positions,
+            width: 1.5,
+            material: new Cesium.ColorMaterialProperty(color.withAlpha(0.9)),
+            clampToGround: false,
+          },
+        });
+
+        // Label at midpoint
+        const mid = route.waypoints[Math.floor(route.waypoints.length / 2)];
+        const label = viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(mid.lon, mid.lat, 20000),
+          label: {
+            text: `${route.weapon_type.replace(/_/g, " ")} · ${Math.round(route.total_dist_km)}km · ${mins}m`,
+            font: "9px monospace",
+            fillColor: color,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            showBackground: true,
+            backgroundColor: Cesium.Color.fromCssColorString("#000000").withAlpha(0.6),
+            backgroundPadding: new Cesium.Cartesian2(5, 3),
+            pixelOffset: new Cesium.Cartesian2(0, -12),
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+        });
+
+        planHighlightRefs.current.push(glow, line, label);
       }
 
       // Suggested carriers — cyan with ring
