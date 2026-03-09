@@ -57,6 +57,11 @@ interface PlatformCatalogItem {
   icon?: string;
 }
 
+interface PlanHighlights {
+  airbases: Array<{ id: string; name: string; lat: number; lon: number }>;
+  carriers: Array<{ lat: number; lon: number; label: string }>;
+}
+
 type PendingWeapon = Pick<
   WeaponCatalogItem,
   "name" | "domain" | "speed_mach" | "cruise_altitude_m" | "stealth" | "evasion_capable"
@@ -72,6 +77,7 @@ export default function KineticPage() {
   const [showPlanner, setShowPlanner] = useState(false);
   const [showAssetsPanel, setShowAssetsPanel] = useState(false);
   const [pendingWeapon, setPendingWeapon] = useState<PendingWeapon | null>(null);
+  const [planHighlights, setPlanHighlights] = useState<PlanHighlights | null>(null);
   const { simRunning, wsConnected, simTimeS } = useEntityGraph();
 
   // ESC cancels pending weapon placement
@@ -229,7 +235,13 @@ export default function KineticPage() {
               <button onClick={() => setShowPlanner(false)} className="text-gray-600 hover:text-white text-sm leading-none">✕</button>
             </div>
             <div className="flex-1">
-              <PlannerChat />
+              <PlannerChat
+                onPlanResult={(p) =>
+                  setPlanHighlights(
+                    p ? { airbases: p.suggested_airbases, carriers: p.carrier_positions } : null
+                  )
+                }
+              />
             </div>
           </div>
         )}
@@ -242,6 +254,7 @@ export default function KineticPage() {
             selectedEntityId={selectedEntityId}
             pendingWeapon={pendingWeapon}
             onWeaponPlaced={() => setPendingWeapon(null)}
+            planHighlights={planHighlights}
           />
 
           {/* Mode label watermark */}

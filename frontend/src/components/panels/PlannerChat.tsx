@@ -50,7 +50,9 @@ const PIPELINE_STEPS = [
   { color: "text-cyan-400",   label: "Greedy Carrier Placement", desc: "Iteratively places carriers to maximise target coverage within strike radius (≈63% of optimal — set-cover approximation)." },
 ];
 
-export default function PlannerChat() {
+export default function PlannerChat({ onPlanResult }: {
+  onPlanResult?: (plan: PlanSuggestion | null) => void;
+}) {
   const [query, setQuery]     = useState("");
   const [loading, setLoading] = useState(false);
   const [plan, setPlan]       = useState<PlanSuggestion | null>(null);
@@ -66,6 +68,7 @@ export default function PlannerChat() {
 
   const getTargets = useEntityGraph((s) => s.getTargets);
   const getThreats = useEntityGraph((s) => s.getThreats);
+  const upsertEntity = useEntityGraph((s) => s.upsertEntity);
 
   // ── add target ─────────────────────────────────────────────────────────────
   const handleAddTarget = async () => {
@@ -96,6 +99,8 @@ export default function PlannerChat() {
         setManualTargets((prev) =>
           prev.map((t) => t.id === tempId ? { ...t, id: serverId, persisted: true } : t)
         );
+        // Push into Zustand store so CesiumGlobe renders the target immediately
+        upsertEntity(data);
       }
     } catch {
       // mark as persisted anyway — will be picked up on suggest
@@ -147,7 +152,9 @@ export default function PlannerChat() {
         const detail = await res.text();
         throw new Error(`Planner error ${res.status}: ${detail}`);
       }
-      setPlan(await res.json());
+      const result = await res.json();
+      setPlan(result);
+      onPlanResult?.(result);
     } catch (e) {
       setError((e as Error).message);
     } finally {

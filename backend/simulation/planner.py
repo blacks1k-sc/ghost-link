@@ -67,6 +67,38 @@ def _load_world_bases() -> list[dict]:
 
 CARRIER_RANGE_KM = 500.0   # carrier air-wing strike range
 
+# Minimum distance an airbase must be from any target to be considered friendly territory.
+# Bases closer than this are almost certainly in or adjacent to enemy territory.
+FRIENDLY_STANDOFF_KM = 400.0
+
+# Known ocean anchor points used for carrier placement heuristics.
+# Algorithmic fallback picks the closest ocean body to the target centroid.
+_OCEAN_ANCHORS: list[dict] = [
+    {"lat": 20.0, "lon":  63.0, "label": "Arabian Sea"},
+    {"lat": 15.0, "lon":  87.0, "label": "Bay of Bengal"},
+    {"lat":  5.0, "lon":  73.0, "label": "Indian Ocean"},
+    {"lat": 26.0, "lon":  55.0, "label": "Persian Gulf"},
+    {"lat": 20.0, "lon":  38.0, "label": "Red Sea"},
+    {"lat": 12.0, "lon":  45.0, "label": "Gulf of Aden"},
+    {"lat": 35.0, "lon":  20.0, "label": "Mediterranean Sea"},
+    {"lat": 43.0, "lon":  35.0, "label": "Black Sea"},
+    {"lat": 55.0, "lon":   5.0, "label": "North Sea"},
+    {"lat": 45.0, "lon": -30.0, "label": "North Atlantic"},
+    {"lat": 35.0, "lon": -10.0, "label": "East Atlantic"},
+    {"lat": 15.0, "lon": 115.0, "label": "South China Sea"},
+    {"lat": 30.0, "lon": 125.0, "label": "East China Sea"},
+    {"lat": 40.0, "lon": 145.0, "label": "Northwest Pacific"},
+    {"lat":-20.0, "lon":  55.0, "label": "South Indian Ocean"},
+]
+
+
+def _nearest_ocean_anchor(lat: float, lon: float) -> dict:
+    """Return the ocean anchor closest to the given coordinates."""
+    return min(
+        _OCEAN_ANCHORS,
+        key=lambda a: haversine_km(a["lat"], a["lon"], lat, lon),
+    )
+
 
 def _greedy_carrier_placement(
     targets: list[TargetSpec],
@@ -76,11 +108,9 @@ def _greedy_carrier_placement(
     """
     Place up to n_carriers carriers so they cover the maximum number of targets.
 
-    Algorithm:
-      1. Generate candidate positions (sea regions provided or synthesised near targets).
-      2. For each candidate, count targets within CARRIER_RANGE_KM (greedy coverage).
-      3. Pick the candidate covering the most un-covered targets.
-      4. Mark those targets as covered. Repeat.
+    Candidate positions are either:
+    - Explicitly supplied sea regions (from Ollama), or
+    - The nearest ocean anchors to the target centroid (algorithmic fallback).
 
     DSA: Greedy Set Cover approximation — O(C × T) per iteration,
          optimal ratio guarantee: (1 - 1/e) ≈ 63% of optimal coverage.
@@ -88,12 +118,22 @@ def _greedy_carrier_placement(
     if not targets:
         return []
 
-    # Generate candidates near targets if no sea regions given
     candidates = list(sea_accessible_regions) if sea_accessible_regions else []
+
     if not candidates:
-        # Offset targets ~400 km south as rough sea position
-        for t in targets:
-            candidates.append({"lat": t.lat - 3.5, "lon": t.lon, "label": f"Sea near {t.label}"})
+        # Use nearest ocean anchors instead of blind lat offset
+        avg_lat = sum(t.lat for t in targets) / len(targets)
+        avg_lon = sum(t.lon for t in targets) / len(targets)
+
+        # Sort all ocean anchors by distance to centroid; take the 4 closest as candidates
+        sorted_anchors = sorted(
+            _OCEAN_ANCHORS,
+            key=lambda a: haversine_km(a["lat"], a["lon"], avg_lat, avg_lon),
+        )
+        candidates = [
+            {"lat": a["lat"], "lon": a["lon"], "label": a["label"]}
+            for a in sorted_anchors[:4]
+        ]
 
     uncovered = set(range(len(targets)))
     placements: list[dict] = []
@@ -115,6 +155,11 @@ def _greedy_carrier_placement(
                 best_candidate = cand
 
         if best_candidate is None:
+            # No candidate covers any remaining target — just place at closest ocean
+            avg_lat = sum(targets[i].lat for i in uncovered) / len(uncovered)
+            avg_lon = sum(targets[i].lon for i in uncovered) / len(uncovered)
+            anchor = _nearest_ocean_anchor(avg_lat, avg_lon)
+            placements.append({"lat": anchor["lat"], "lon": anchor["lon"], "label": anchor["label"]})
             break
 
         placements.append({
@@ -132,16 +177,32 @@ def _greedy_carrier_placement(
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """You are a mission planning assistant for a multi-domain strike simulation.
-Given the current world state (targets, nearby airbases, weapon ranges, threat zones) and the
-operator's intent, produce a structured mission plan in **strict JSON** with these keys:
+The TARGETS are ENEMY installations to be destroyed by an attacking force.
+
+STRICT RULES — violating any rule produces an invalid plan:
+1. suggested_airbases are FRIENDLY LAUNCH BASES — they must be in territory that is geographically
+   AWAY from the enemy targets (minimum 400 km from every target). Never pick an airbase that is
+   inside, adjacent to, or in the same country as the target area. Choose bases in allied or
+   neutral nations that have weapons with sufficient range to reach the targets.
+2. carrier_positions must be in OPEN OCEAN or SEA — never on land. Use these reference ocean
+   coordinates as anchors and interpolate: Arabian Sea (~20°N 63°E), Bay of Bengal (~15°N 87°E),
+   Persian Gulf (~26°N 55°E), Red Sea (~20°N 38°E), Mediterranean (~35°N 20°E),
+   South China Sea (~15°N 115°E), East China Sea (~30°N 125°E), North Atlantic (~45°N -30°E),
+   Indian Ocean (~5°N 73°E). Pick the ocean body that is closest to the targets but NOT between
+   the attacking force and the targets in a way that would require overflying enemy territory.
+3. weapon_types must be IDs from the provided catalog — only choose weapons whose range_km is
+   sufficient to reach the targets from the selected airbases or carriers.
+4. Approach direction: weapons fly FROM airbases/carriers TOWARD targets. Plan the approach to
+   minimise threat exposure and avoid known SAM zones.
+
+Output ONLY a strict JSON object with these keys — no markdown, no commentary:
 {
   "suggested_airbases": [{"id": str, "name": str, "lat": float, "lon": float}],
   "carrier_positions":  [{"lat": float, "lon": float, "label": str}],
   "tanker_waypoints":   [{"lat": float, "lon": float, "label": str}],
-  "weapon_types":       [str],          // weapon IDs from the catalog
-  "rationale": str                      // brief plain-English reasoning
-}
-Output ONLY the JSON object — no markdown fences, no commentary."""
+  "weapon_types":       [str],
+  "rationale": str
+}"""
 
 
 async def _call_ollama(user_query: str, context_json: str) -> dict | None:
@@ -200,9 +261,35 @@ def _algorithmic_plan(
     avg_lat = sum(t.lat for t in targets) / len(targets)
     avg_lon = sum(t.lon for t in targets) / len(targets)
 
-    # Sort airbases by distance to centroid
+    # Filter out airbases inside or near the target area (likely enemy territory).
+    # A base must be at least FRIENDLY_STANDOFF_KM from every target.
+    friendly_bases = [
+        ab for ab in airbases
+        if all(
+            haversine_km(ab["lat"], ab["lon"], t.lat, t.lon) >= FRIENDLY_STANDOFF_KM
+            for t in targets
+        )
+    ]
+
+    # Among friendly bases, prefer those still within weapon range of at least one target.
+    # Sort by distance to centroid so we pick the closest feasible launch point.
+    max_weapon_range = max(
+        (w["range_km"] for w in weapon_catalog.get("weapons", [])),
+        default=2000.0,
+    )
+    in_range = [
+        ab for ab in friendly_bases
+        if any(
+            haversine_km(ab["lat"], ab["lon"], t.lat, t.lon) <= max_weapon_range
+            for t in targets
+        )
+    ]
+
+    # Fall back to all friendly bases if none are in range (edge case)
+    pool = in_range if in_range else friendly_bases if friendly_bases else airbases
+
     sorted_ab = sorted(
-        airbases,
+        pool,
         key=lambda ab: haversine_km(ab["lat"], ab["lon"], avg_lat, avg_lon),
     )
     suggested = sorted_ab[:3]

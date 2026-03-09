@@ -30,17 +30,24 @@ interface PendingWeapon {
   evasion_capable: boolean;
 }
 
+interface PlanHighlights {
+  airbases: Array<{ id: string; name: string; lat: number; lon: number }>;
+  carriers: Array<{ lat: number; lon: number; label: string }>;
+}
+
 interface Props {
   mode: "planning" | "live";
   onEntitySelect: (id: string | null) => void;
   selectedEntityId: string | null;
   pendingWeapon?: PendingWeapon | null;
   onWeaponPlaced?: () => void;
+  planHighlights?: PlanHighlights | null;
 }
 
-export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pendingWeapon = null, onWeaponPlaced }: Props) {
+export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pendingWeapon = null, onWeaponPlaced, planHighlights }: Props) {
   const viewerRef = useRef<CesiumType.Viewer | null>(null);
   const entityRefs = useRef<Map<string, CesiumType.Entity>>(new Map());
+  const planHighlightRefs = useRef<CesiumType.Entity[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -455,6 +462,108 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
     }
   };
 
+  // ── Plan highlights (suggested airbases + carriers from AI planner) ─────────
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    import("cesium").then((Cesium) => {
+      // Clear previous highlights
+      for (const e of planHighlightRefs.current) {
+        viewer.entities.remove(e);
+      }
+      planHighlightRefs.current = [];
+
+      if (!planHighlights) return;
+
+      // Suggested airbases — yellow with ring
+      for (const ab of planHighlights.airbases) {
+        if (ab.lat == null || ab.lon == null) continue;
+        const pos = Cesium.Cartesian3.fromDegrees(ab.lon, ab.lat, 0);
+        const color = Cesium.Color.fromCssColorString("#eab308");
+
+        const ring = viewer.entities.add({
+          position: pos,
+          ellipse: {
+            semiMajorAxis: 40000,
+            semiMinorAxis: 40000,
+            material: color.withAlpha(0.08),
+            outline: true,
+            outlineColor: color.withAlpha(0.6),
+            outlineWidth: 1.5,
+            height: 0,
+          },
+        });
+        const icon = viewer.entities.add({
+          position: pos,
+          billboard: {
+            image: getPlanAirbaseSvg(),
+            width: 26,
+            height: 26,
+            color,
+            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          },
+          label: {
+            text: ab.name || ab.id,
+            font: "10px monospace",
+            fillColor: Cesium.Color.fromCssColorString("#eab308"),
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            pixelOffset: new Cesium.Cartesian2(0, -30),
+            showBackground: true,
+            backgroundColor: Cesium.Color.fromCssColorString("#000000").withAlpha(0.55),
+            backgroundPadding: new Cesium.Cartesian2(4, 3),
+          },
+        });
+        planHighlightRefs.current.push(ring, icon);
+      }
+
+      // Suggested carriers — cyan with ring
+      for (const cv of planHighlights.carriers) {
+        if (cv.lat == null || cv.lon == null) continue;
+        const pos = Cesium.Cartesian3.fromDegrees(cv.lon, cv.lat, 0);
+        const color = Cesium.Color.fromCssColorString("#22d3ee");
+
+        const ring = viewer.entities.add({
+          position: pos,
+          ellipse: {
+            semiMajorAxis: 55000,
+            semiMinorAxis: 55000,
+            material: color.withAlpha(0.07),
+            outline: true,
+            outlineColor: color.withAlpha(0.5),
+            outlineWidth: 1.5,
+            height: 0,
+          },
+        });
+        const icon = viewer.entities.add({
+          position: pos,
+          billboard: {
+            image: getCarrierSvg(),
+            width: 26,
+            height: 26,
+            color,
+            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          },
+          label: {
+            text: cv.label || "CARRIER",
+            font: "10px monospace",
+            fillColor: color,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            pixelOffset: new Cesium.Cartesian2(0, -30),
+            showBackground: true,
+            backgroundColor: Cesium.Color.fromCssColorString("#000000").withAlpha(0.55),
+            backgroundPadding: new Cesium.Cartesian2(4, 3),
+          },
+        });
+        planHighlightRefs.current.push(ring, icon);
+      }
+    });
+  }, [planHighlights]);
+
   return (
     <div
       ref={containerRef}
@@ -490,6 +599,17 @@ function getThreatSvg() {
 function getAirbaseSvg() {
   return svgUri(
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#eab308"><polygon points="12,2 22,22 2,22" /></svg>`,
+  );
+}
+
+function getPlanAirbaseSvg() {
+  // Runway cross + diamond — distinct from regular airbase triangle
+  return svgUri(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#eab308" stroke-width="1.8">` +
+    `<rect x="2" y="10" width="20" height="4" rx="1" fill="#eab308" stroke="none"/>` +
+    `<rect x="10" y="2" width="4" height="20" rx="1" fill="#eab308" stroke="none"/>` +
+    `<polygon points="12,4 20,12 12,20 4,12" fill="none" stroke="#eab308" stroke-width="1.5"/>` +
+    `</svg>`,
   );
 }
 

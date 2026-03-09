@@ -44,6 +44,7 @@ suda_engine = SudaEngine(graph, event_queue, spatial)
 
 # Active WebSocket connections
 websocket_clients: list[WebSocket] = []
+_main_loop: asyncio.AbstractEventLoop | None = None
 
 # Simulation control
 sim_running = False
@@ -82,10 +83,12 @@ async def broadcast_entity_change(event_type: str, payload):
 
 
 def _sync_notify(event_type: str, payload):
-    """Called synchronously from EntityGraph; schedules async broadcast."""
-    asyncio.get_event_loop().call_soon_threadsafe(
-        lambda: asyncio.ensure_future(broadcast_entity_change(event_type, payload))
-    )
+    """Called synchronously from EntityGraph; schedules async broadcast on the main loop."""
+    if _main_loop is not None:
+        _main_loop.call_soon_threadsafe(
+            _main_loop.create_task,
+            broadcast_entity_change(event_type, payload),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +97,8 @@ def _sync_notify(event_type: str, payload):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _main_loop
+    _main_loop = asyncio.get_running_loop()
     graph.add_listener(_sync_notify)
     await database.init_db()
     logger.info("GHOST-LINK backend started")
