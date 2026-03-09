@@ -105,8 +105,11 @@ WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
 # Fetch military bases (Q695793) and naval bases (Q12516) with coordinates + country
 WIKIDATA_QUERY = """
 SELECT ?item ?itemLabel ?lat ?lon ?countryCode WHERE {
-  { ?item wdt:P31 wd:Q695793 . } UNION   # military base
-  { ?item wdt:P31 wd:Q12516   . }        # naval base
+  {
+    { ?item wdt:P31 wd:Q62447   . } UNION   # military air base
+    { ?item wdt:P31 wd:Q216083  . } UNION   # air force base
+    { ?item wdt:P31 wd:Q1312    . }         # naval air station
+  }
   ?item wdt:P625 ?coord .
   BIND(geof:latitude(?coord)  AS ?lat)
   BIND(geof:longitude(?coord) AS ?lon)
@@ -116,6 +119,13 @@ SELECT ?item ?itemLabel ?lat ?lon ?countryCode WHERE {
 }
 LIMIT 3000
 """
+
+# Name must contain at least one military keyword to be included.
+_WIKIDATA_MILITARY_KEYWORDS = (
+    "air base", "air force", "airbase", "air station", "afb", "raf ",
+    "naval air", "marine corps air", "military airport", "base aér",
+    "luftwaffe", "авиабаз", "авиабазы",
+)
 
 
 def fetch_wikidata_bases() -> list[dict]:
@@ -146,11 +156,15 @@ def fetch_wikidata_bases() -> list[dict]:
         if not name or name.startswith("Q"):   # unnamed / only QID
             continue
 
+        # Reject entries that don't look like military air bases
+        lname = name.lower()
+        if not any(kw in lname for kw in _WIKIDATA_MILITARY_KEYWORDS):
+            continue
+
         qid = binding["item"]["value"].rsplit("/", 1)[-1]
         country = binding.get("countryCode", {}).get("value", "")
 
         # Determine type from label heuristic
-        lname = name.lower()
         etype = "CARRIER" if any(w in lname for w in ("naval", "navy", "fleet", "port")) else "AIRBASE"
 
         results.append({

@@ -96,8 +96,9 @@ def fetch_ourairports() -> list[dict]:
             })
             continue
 
-        # Include large airports in key countries (dual-use / NATO hubs)
-        if atype == "large_airport" and country in LARGE_AIRPORT_COUNTRIES:
+        # Large airports: only include if the name clearly identifies a military installation.
+        # (Removed the blanket country-based catch-all that pulled in civilian airports.)
+        if atype == "large_airport" and any(kw in lname for kw in MILITARY_NAME_KEYWORDS):
             results.append({
                 "id": f"ourairports_{icao}",
                 "name": name,

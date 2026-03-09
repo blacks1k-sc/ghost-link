@@ -50,14 +50,56 @@ def _load_weapons_catalog() -> dict:
 
 
 def _load_world_bases() -> list[dict]:
-    """Load seeded airbases. Falls back to empty list if not yet seeded."""
+    """Load seeded airbases + military supplement.  Falls back to empty list if not yet seeded."""
     path = Path(__file__).parent.parent / "data" / "world_bases.json"
     if not path.exists():
         logger.warning("world_bases.json not found — airbase list empty")
         return []
     with open(path) as f:
         data = json.load(f)
-    return data if isinstance(data, list) else data.get("airbases", [])
+    bases: list[dict] = data if isinstance(data, list) else data.get("airbases", [])
+
+    # ── Clean world_bases.json of known bad data ────────────────────────────
+    # 1. Drop all Wikidata entries — the existing world_bases.json has ~2,324
+    #    Wikidata entries that are rivers/rapids/waterfalls due to wrong QIDs
+    #    in the original SPARQL query.  Re-running seed.py with the fixed
+    #    ingest_bases.py will regenerate this correctly.
+    # 2. Drop OurAirports large-airport catch-all entries (civilian airports).
+    #    The original ingest_airports.py included all large_airports in key
+    #    countries; the fixed script only takes ones with military name keywords.
+    _CIVILIAN_KEYWORDS = (
+        "international airport", "domestic airport", "regional airport",
+        "municipal airport", "civil airport", "commercial airport",
+    )
+    def _is_military_enough(ab: dict) -> bool:
+        if ab.get("source") == "wikidata":
+            return False   # all existing wikidata entries are junk — drop
+        name_l = ab.get("name", "").lower()
+        if ab.get("source") == "ourairports" and any(kw in name_l for kw in _CIVILIAN_KEYWORDS):
+            return False   # clearly civilian airport that slipped through
+        return True
+
+    bases = [ab for ab in bases if _is_military_enough(ab)]
+    logger.info("world_bases after cleaning: %d entries", len(bases))
+
+    # ── Merge verified military bases supplement (highest priority) ──────────
+    supp_path = Path(__file__).parent.parent / "data" / "military_bases_supplement.json"
+    if supp_path.exists():
+        with open(supp_path) as f:
+            supplement = json.load(f)
+        existing_ids = {ab["id"] for ab in supplement}
+        bases = list(supplement) + [ab for ab in bases if ab["id"] not in existing_ids]
+        logger.info("Loaded %d military supplement bases; total pool: %d", len(supplement), len(bases))
+
+    # ── Fix OSM entries with empty country field ─────────────────────────────
+    no_cc = [ab for ab in bases if not ab.get("country")]
+    if no_cc:
+        known = [ab for ab in bases if ab.get("country")]
+        for ab in no_cc:
+            nearest = min(known, key=lambda k: (k["lat"]-ab["lat"])**2 + (k["lon"]-ab["lon"])**2)
+            ab["country"] = nearest["country"]
+
+    return bases
 
 
 # ---------------------------------------------------------------------------
@@ -68,11 +110,13 @@ def _load_world_bases() -> list[dict]:
 CARRIER_RANGE_KM = 500.0   # carrier air-wing strike range
 
 # Minimum distance an airbase must be from any target to be considered friendly territory.
-FRIENDLY_STANDOFF_KM = 400.0
+# Country-code filtering is the primary guard; this is a belt-and-suspenders fallback.
+FRIENDLY_STANDOFF_KM = 300.0
 
 # Radius used to detect which country/countries the targets are in.
 # Any airbase within this radius of any target contributes its country code to "enemy countries".
-ENEMY_DETECT_RADIUS_KM = 350.0
+# 150 km keeps us well within the target country without catching friendly border bases.
+ENEMY_DETECT_RADIUS_KM = 150.0
 
 # Known ocean anchor points used for carrier placement heuristics.
 # Algorithmic fallback picks the closest ocean body to the target centroid.
@@ -326,10 +370,15 @@ def _algorithmic_plan(
     # Fall back to all friendly bases if none are in range (edge case)
     pool = in_range if in_range else friendly_bases if friendly_bases else airbases
 
-    sorted_ab = sorted(
-        pool,
-        key=lambda ab: haversine_km(ab["lat"], ab["lon"], avg_lat, avg_lon),
-    )
+    # Sort: supplement (verified military) bases come first within same distance band,
+    # then by distance to centroid.  This ensures real air force stations are preferred
+    # over civilian airports when both are equidistant.
+    def sort_key(ab: dict):
+        dist = haversine_km(ab["lat"], ab["lon"], avg_lat, avg_lon)
+        is_military = 0 if ab.get("source") == "supplement" else 1
+        return (is_military, dist)
+
+    sorted_ab = sorted(pool, key=sort_key)
     suggested = sorted_ab[:3]
 
     # Pick long-range weapons that can reach targets from suggested airbases
