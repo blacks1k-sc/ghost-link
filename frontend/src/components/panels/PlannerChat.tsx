@@ -51,8 +51,9 @@ const PIPELINE_STEPS = [
   { color: "text-cyan-400",   label: "Greedy Carrier Placement", desc: "Iteratively places carriers to maximise target coverage within strike radius (≈63% of optimal — set-cover approximation)." },
 ];
 
-export default function PlannerChat({ onPlanResult }: {
+export default function PlannerChat({ onPlanResult, onWeaponHover }: {
   onPlanResult?: (plan: PlanSuggestion | null) => void;
+  onWeaponHover?: (weaponType: string | null) => void;
 }) {
   const [query, setQuery]     = useState("");
   const [loading, setLoading] = useState(false);
@@ -372,7 +373,12 @@ export default function PlannerChat({ onPlanResult }: {
                 ROUTES ({plan.routes.length})
               </div>
               {plan.routes.map((r, i) => (
-                <div key={i} className="text-gray-300 text-[10px] flex justify-between">
+                <div
+                  key={i}
+                  className="text-gray-300 text-[10px] flex justify-between cursor-pointer rounded px-1 py-0.5 hover:bg-[#0f1f35] transition-colors"
+                  onMouseEnter={() => onWeaponHover?.(r.weapon_type)}
+                  onMouseLeave={() => onWeaponHover?.(null)}
+                >
                   <span>• {r.weapon_type.replace(/_/g, " ").toUpperCase()}</span>
                   <span className="text-gray-600">
                     {r.total_dist_km} km · {fmtTime(r.total_time_s)}

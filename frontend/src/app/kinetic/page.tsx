@@ -84,6 +84,8 @@ export default function KineticPage() {
   const [showAssetsPanel, setShowAssetsPanel] = useState(false);
   const [pendingWeapon, setPendingWeapon] = useState<PendingWeapon | null>(null);
   const [planHighlights, setPlanHighlights] = useState<PlanHighlights | null>(null);
+  const [hoveredRouteWeapon, setHoveredRouteWeapon] = useState<string | null>(null);
+  const [viewAllPaths, setViewAllPaths] = useState(false);
   const { simRunning, wsConnected, simTimeS } = useEntityGraph();
 
   // ESC cancels pending weapon placement
@@ -256,6 +258,9 @@ export default function KineticPage() {
                     } : null
                   )
                 }
+                onWeaponHover={(wt) => {
+                  if (!viewAllPaths) setHoveredRouteWeapon(wt);
+                }}
               />
             </div>
           </div>
@@ -270,13 +275,27 @@ export default function KineticPage() {
             pendingWeapon={pendingWeapon}
             onWeaponPlaced={() => setPendingWeapon(null)}
             planHighlights={planHighlights}
+            hoveredRouteWeapon={hoveredRouteWeapon}
+            viewAllPaths={viewAllPaths}
           />
 
-          {/* Mode label watermark */}
-          <div className="absolute top-2 right-2 pointer-events-none z-10">
-            <span className="text-xs font-mono text-gray-700 tracking-widest uppercase">
+          {/* Top-right overlays */}
+          <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1.5">
+            <span className="text-xs font-mono text-gray-700 tracking-widest uppercase pointer-events-none">
               {mode} MODE
             </span>
+            {planHighlights && planHighlights.routes.length > 0 && (
+              <button
+                onClick={() => setViewAllPaths((v) => !v)}
+                className={`px-2 py-0.5 text-[10px] font-mono tracking-widest rounded border transition-colors ${
+                  viewAllPaths
+                    ? "border-amber-500 bg-amber-900/60 text-amber-300"
+                    : "border-green-800 bg-black/60 text-green-500 hover:border-green-600"
+                }`}
+              >
+                ALL PATHS
+              </button>
+            )}
           </div>
 
           {/* Pending weapon placement banner */}

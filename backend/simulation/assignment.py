@@ -190,6 +190,10 @@ def assign_weapons_to_targets(
 # Airbase selection for each weapon type
 # ---------------------------------------------------------------------------
 
+# Air-domain weapons that can also launch from naval carriers
+_CARRIER_COMPATIBLE_AIR_WEAPONS: frozenset[str] = frozenset({"lrasm", "harpoon"})
+
+
 def _load_weapons_catalog() -> dict:
     path = Path(__file__).parent.parent / "data" / "weapons.json"
     with open(path) as f:
@@ -203,12 +207,14 @@ def find_best_airbase(
     weapon_catalog: dict | None = None,
 ) -> dict | None:
     """
-    For a given weapon type and target, return the closest feasible airbase.
-    Feasibility: airbase must support the weapon's platform, and
-    haversine(airbase, target) <= weapon.range_km * 1.1 (10% margin).
+    For a given weapon type and target, return the closest feasible launch platform.
+
+    Platform compatibility rules:
+    - SEA domain weapons (Tomahawk, SCALP Naval, etc.): carriers only
+    - AIR domain weapons: airbases only, except carrier-compatible ones (LRASM, Harpoon)
+    - LAND domain weapons: any platform (treated as ground-launched, no airbase filter)
 
     DSA used: linear scan O(n) — for planning this is called infrequently.
-    For large airbase sets (>1000) swap to K-D Tree nearest_k query.
     """
     if weapon_catalog is None:
         weapon_catalog = _load_weapons_catalog()
@@ -220,11 +226,23 @@ def find_best_airbase(
     if spec is None:
         return None
 
+    domain = spec.get("domain", "AIR")
     max_range = spec["range_km"] * 1.1  # 10% planning margin
 
     best: dict | None = None
     best_dist = float("inf")
     for ab in candidate_airbases:
+        ab_is_carrier = ab.get("is_carrier", False)
+
+        if domain == "SEA":
+            # Sea-launched weapons: naval platforms only
+            if not ab_is_carrier:
+                continue
+        elif domain == "AIR":
+            # Air-launched weapons: airbases only, unless also carrier-compatible
+            if ab_is_carrier and weapon_type_id not in _CARRIER_COMPATIBLE_AIR_WEAPONS:
+                continue
+
         dist = haversine_km(ab["lat"], ab["lon"], target.lat, target.lon)
         if dist <= max_range and dist < best_dist:
             best = ab

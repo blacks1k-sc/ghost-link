@@ -60,12 +60,15 @@ interface Props {
   pendingWeapon?: PendingWeapon | null;
   onWeaponPlaced?: () => void;
   planHighlights?: PlanHighlights | null;
+  hoveredRouteWeapon?: string | null;
+  viewAllPaths?: boolean;
 }
 
-export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pendingWeapon = null, onWeaponPlaced, planHighlights }: Props) {
+export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pendingWeapon = null, onWeaponPlaced, planHighlights, hoveredRouteWeapon = null, viewAllPaths = false }: Props) {
   const viewerRef = useRef<CesiumType.Viewer | null>(null);
   const entityRefs = useRef<Map<string, CesiumType.Entity>>(new Map());
   const planHighlightRefs = useRef<CesiumType.Entity[]>([]);
+  const routeEntityRefs = useRef<Map<string, CesiumType.Entity[]>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -537,7 +540,8 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
         planHighlightRefs.current.push(ring, icon);
       }
 
-      // ── Route polylines ─────────────────────────────────────────────────────
+      // ── Route polylines — hidden by default, revealed on hover / viewAllPaths ─
+      routeEntityRefs.current.clear();
       for (let i = 0; i < (planHighlights.routes ?? []).length; i++) {
         const route = planHighlights.routes[i];
         if (!route.waypoints || route.waypoints.length < 2) continue;
@@ -551,6 +555,7 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
 
         // Glowing outer line (wider, dimmer)
         const glow = viewer.entities.add({
+          show: false,
           polyline: {
             positions,
             width: 4,
@@ -564,6 +569,7 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
 
         // Crisp inner line
         const line = viewer.entities.add({
+          show: false,
           polyline: {
             positions,
             width: 1.5,
@@ -575,6 +581,7 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
         // Label at midpoint
         const mid = route.waypoints[Math.floor(route.waypoints.length / 2)];
         const label = viewer.entities.add({
+          show: false,
           position: Cesium.Cartesian3.fromDegrees(mid.lon, mid.lat, 20000),
           label: {
             text: `${route.weapon_type.replace(/_/g, " ")} · ${Math.round(route.total_dist_km)}km · ${mins}m`,
@@ -591,6 +598,9 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
           },
         });
 
+        const weaponKey = route.weapon_type;
+        const existing = routeEntityRefs.current.get(weaponKey) ?? [];
+        routeEntityRefs.current.set(weaponKey, [...existing, glow, line, label]);
         planHighlightRefs.current.push(glow, line, label);
       }
 
@@ -638,6 +648,16 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
       }
     });
   }, [planHighlights]);
+
+  // ── Route visibility — hover-to-reveal + viewAllPaths override ─────────────
+  useEffect(() => {
+    for (const [weaponType, entities] of routeEntityRefs.current.entries()) {
+      const visible = viewAllPaths || hoveredRouteWeapon === weaponType;
+      for (const e of entities) {
+        e.show = visible;
+      }
+    }
+  }, [hoveredRouteWeapon, viewAllPaths]);
 
   return (
     <div

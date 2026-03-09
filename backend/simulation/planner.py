@@ -523,11 +523,27 @@ async def generate_plan(
         )
 
     # ---- Step 3: Hungarian weapon-to-target assignment -----------------------
-    # Build WeaponSpecs using selected airbases
-    airbases_for_assignment = (
-        selected_airbases if isinstance(selected_airbases[0], dict) and "lat" in selected_airbases[0]
+    # Build combined launch-platform pool: selected airbases + carriers (tagged as naval)
+    # Carriers are tagged with is_carrier=True so find_best_airbase enforces domain rules:
+    # SEA-domain weapons (Tomahawk) will only select from carrier entries.
+    carrier_entries = [
+        {
+            "id": f"carrier_{i}",
+            "name": cp.get("label", f"CVN-{i + 1}"),
+            "lat": cp["lat"],
+            "lon": cp["lon"],
+            "is_carrier": True,
+            "source": "carrier",
+        }
+        for i, cp in enumerate(carrier_positions)
+    ]
+
+    base_pool = (
+        selected_airbases
+        if selected_airbases and isinstance(selected_airbases[0], dict) and "lat" in selected_airbases[0]
         else all_airbases
-    ) if selected_airbases else all_airbases
+    )
+    airbases_for_assignment = list(base_pool) + carrier_entries
 
     weapon_specs = build_weapon_specs(weapon_type_ids, target_specs, airbases_for_assignment, weapon_catalog)
 
