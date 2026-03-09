@@ -68,8 +68,11 @@ def _load_world_bases() -> list[dict]:
 CARRIER_RANGE_KM = 500.0   # carrier air-wing strike range
 
 # Minimum distance an airbase must be from any target to be considered friendly territory.
-# Bases closer than this are almost certainly in or adjacent to enemy territory.
 FRIENDLY_STANDOFF_KM = 400.0
+
+# Radius used to detect which country/countries the targets are in.
+# Any airbase within this radius of any target contributes its country code to "enemy countries".
+ENEMY_DETECT_RADIUS_KM = 350.0
 
 # Known ocean anchor points used for carrier placement heuristics.
 # Algorithmic fallback picks the closest ocean body to the target centroid.
@@ -235,6 +238,45 @@ async def _call_ollama(user_query: str, context_json: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Country-based hostile territory detection
+# ---------------------------------------------------------------------------
+
+def _infer_enemy_countries(targets: list[TargetSpec], airbases: list[dict]) -> set[str]:
+    """
+    Infer which ISO country codes are 'enemy territory' by finding every country
+    that has at least one airbase within ENEMY_DETECT_RADIUS_KM of any target.
+
+    This avoids hard-coded country lists — if a target is placed in Pakistan,
+    all Pakistani airbases are automatically excluded from friendly suggestions.
+    """
+    enemy: set[str] = set()
+    for t in targets:
+        for ab in airbases:
+            cc = ab.get("country", "")
+            if cc and cc not in enemy:
+                if haversine_km(ab["lat"], ab["lon"], t.lat, t.lon) <= ENEMY_DETECT_RADIUS_KM:
+                    enemy.add(cc)
+    return enemy
+
+
+def _filter_friendly(
+    airbases: list[dict],
+    targets: list[TargetSpec],
+    enemy_countries: set[str],
+) -> list[dict]:
+    """Return only airbases that are (a) not in an enemy country AND
+    (b) at least FRIENDLY_STANDOFF_KM from every target."""
+    return [
+        ab for ab in airbases
+        if ab.get("country", "") not in enemy_countries
+        and all(
+            haversine_km(ab["lat"], ab["lon"], t.lat, t.lon) >= FRIENDLY_STANDOFF_KM
+            for t in targets
+        )
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Algorithmic fallback — no Ollama needed
 # ---------------------------------------------------------------------------
 
@@ -261,15 +303,11 @@ def _algorithmic_plan(
     avg_lat = sum(t.lat for t in targets) / len(targets)
     avg_lon = sum(t.lon for t in targets) / len(targets)
 
-    # Filter out airbases inside or near the target area (likely enemy territory).
-    # A base must be at least FRIENDLY_STANDOFF_KM from every target.
-    friendly_bases = [
-        ab for ab in airbases
-        if all(
-            haversine_km(ab["lat"], ab["lon"], t.lat, t.lon) >= FRIENDLY_STANDOFF_KM
-            for t in targets
-        )
-    ]
+    # Detect enemy countries from targets, then filter out all airbases in those countries
+    # AND any base that is too close to the targets (belt-and-suspenders).
+    enemy_countries = _infer_enemy_countries(targets, airbases)
+    logger.info("Inferred enemy countries: %s", enemy_countries)
+    friendly_bases = _filter_friendly(airbases, targets, enemy_countries)
 
     # Among friendly bases, prefer those still within weapon range of at least one target.
     # Sort by distance to centroid so we pick the closest feasible launch point.
@@ -374,12 +412,19 @@ async def generate_plan(
             assignments=[], routes=[], rationale="No targets specified.", used_ollama=False,
         )
 
+    # Pre-compute enemy countries — used to filter both the Ollama context and results.
+    enemy_countries = _infer_enemy_countries(target_specs, all_airbases)
+    logger.info("Enemy countries detected: %s", enemy_countries)
+
+    # Only show friendly bases in the Ollama context so the LLM can't pick enemy bases.
+    friendly_for_context = _filter_friendly(all_airbases, target_specs, enemy_countries)
+
     # ---- Step 1: Ollama natural language layer --------------------------------
     context = {
         "targets": [{"id": t.target_id, "lat": t.lat, "lon": t.lon} for t in target_specs],
         "nearby_airbases": [
             {"id": ab["id"], "name": ab.get("name", ""), "lat": ab["lat"], "lon": ab["lon"]}
-            for ab in all_airbases[:30]  # limit context window
+            for ab in friendly_for_context[:30]  # limit context window; only friendly
         ],
         "threat_zones": [
             {"lat": tz["lat"], "lon": tz["lon"], "radius_km": tz.get("radius_km", 100)}
@@ -397,13 +442,17 @@ async def generate_plan(
     # ---- Step 2: Derive plan parameters from Ollama or algorithmic fallback ---
     if used_ollama:
         llm_ab_ids = {ab["id"] for ab in ollama_result.get("suggested_airbases", [])}
-        selected_airbases = (
-            [ab for ab in all_airbases if ab["id"] in llm_ab_ids]
-            or [ab for ab in all_airbases if ab["id"] in llm_ab_ids]
-        )
+        selected_airbases = [ab for ab in all_airbases if ab["id"] in llm_ab_ids]
         # If LLM gave specific airbases not in our list, include them directly
         if not selected_airbases:
             selected_airbases = ollama_result.get("suggested_airbases", [])
+
+        # Strip any Ollama-suggested bases that landed in enemy territory
+        selected_airbases = _filter_friendly(selected_airbases, target_specs, enemy_countries)
+        if not selected_airbases:
+            # Ollama hallucinated enemy bases — fall back to algorithmic selection
+            fallback = _algorithmic_plan(target_specs, all_airbases, threat_zones, weapon_catalog)
+            selected_airbases = fallback["suggested_airbases"]
 
         carrier_positions = ollama_result.get("carrier_positions", [])
         tanker_waypoints = ollama_result.get("tanker_waypoints", [])
