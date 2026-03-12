@@ -90,6 +90,16 @@ export default function KineticPage() {
   const [pinnedTargetCoords, setPinnedTargetCoords] = useState<{ lat: number; lon: number } | null>(null);
   const { simRunning, wsConnected, simTimeS, setSimRunning } = useEntityGraph();
 
+  // Sync sim status from backend on mount (handles page refresh mid-sim)
+  useEffect(() => {
+    fetch(`${API}/simulation/status`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.running) { setSimRunning(true); setMode("live"); }
+      })
+      .catch(() => null);
+  }, []);
+
   // ESC cancels pending weapon placement or pin mode
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -103,13 +113,16 @@ export default function KineticPage() {
   }, []);
 
   const handleLaunch = async () => {
-    await fetch(`${API}/simulation/launch`, {
+    const res = await fetch(`${API}/simulation/launch`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sim_speed: 1.0, duration_s: 7200 }),
     });
-    setSimRunning(true);
-    setMode("live");
+    // 400 = already running — treat as success
+    if (res.ok || res.status === 400) {
+      setSimRunning(true);
+      setMode("live");
+    }
   };
 
   const handleStop = async () => {

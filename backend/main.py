@@ -703,7 +703,7 @@ def get_saturation():
 
     n_attacking = len(alive_weapons)
     # Each threat battery: (n_interceptors=1, p_kill_base)
-    batteries = [(1, t.properties.get("p_intercept_base", 0.7)) for t in threats] or [(0, 0.0)]
+    batteries = [(1, float(t.properties.get("p_intercept_base") or 0.7)) for t in threats] or [(0, 0.0)]
     weapon_evasion_p = [0.3 if w.properties.get("evasion_capable") else 0.0 for w in alive_weapons]
     weapon_stealth = [0.5 if w.properties.get("stealth") else 1.0 for w in alive_weapons]
 
