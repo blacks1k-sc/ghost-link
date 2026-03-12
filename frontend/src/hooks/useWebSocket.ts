@@ -19,6 +19,7 @@ export function useEntityWebSocket() {
     appendEvent,
     setWsConnected,
     setSimTime,
+    setSimRunning,
   } = useEntityGraph();
 
   useEffect(() => {
@@ -53,6 +54,10 @@ export function useEntityWebSocket() {
             break;
           case "sim_time":
             setSimTime(data.time_s);
+            break;
+          case "sim_status":
+            setSimRunning(data.running);
+            if (data.sim_time_s !== undefined) setSimTime(data.sim_time_s);
             break;
           default:
             // Treat as simulation event for the log

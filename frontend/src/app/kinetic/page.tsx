@@ -86,11 +86,18 @@ export default function KineticPage() {
   const [planHighlights, setPlanHighlights] = useState<PlanHighlights | null>(null);
   const [hoveredRouteWeapon, setHoveredRouteWeapon] = useState<string | null>(null);
   const [viewAllPaths, setViewAllPaths] = useState(false);
-  const { simRunning, wsConnected, simTimeS } = useEntityGraph();
+  const [pinModeActive, setPinModeActive] = useState(false);
+  const [pinnedTargetCoords, setPinnedTargetCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const { simRunning, wsConnected, simTimeS, setSimRunning } = useEntityGraph();
 
-  // ESC cancels pending weapon placement
+  // ESC cancels pending weapon placement or pin mode
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPendingWeapon(null); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setPendingWeapon(null);
+        setPinModeActive(false);
+      }
+    };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
@@ -101,11 +108,13 @@ export default function KineticPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sim_speed: 1.0, duration_s: 7200 }),
     });
+    setSimRunning(true);
     setMode("live");
   };
 
   const handleStop = async () => {
     await fetch(`${API}/simulation/stop`, { method: "POST" });
+    setSimRunning(false);
     setMode("planning");
   };
 
@@ -261,6 +270,9 @@ export default function KineticPage() {
                 onWeaponHover={(wt) => {
                   if (!viewAllPaths) setHoveredRouteWeapon(wt);
                 }}
+                pinModeActive={pinModeActive}
+                onPinModeToggle={setPinModeActive}
+                pinnedCoords={pinnedTargetCoords}
               />
             </div>
           </div>
@@ -277,6 +289,11 @@ export default function KineticPage() {
             planHighlights={planHighlights}
             hoveredRouteWeapon={hoveredRouteWeapon}
             viewAllPaths={viewAllPaths}
+            pinTargetMode={pinModeActive}
+            onTargetPinned={(lat, lon) => {
+              setPinnedTargetCoords({ lat, lon });
+              setPinModeActive(false);
+            }}
           />
 
           {/* Top-right overlays */}
@@ -297,6 +314,23 @@ export default function KineticPage() {
               </button>
             )}
           </div>
+
+          {/* Pin target mode banner */}
+          {pinModeActive && !pendingWeapon && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20">
+              <div className="bg-cyan-950/95 border border-cyan-600 rounded-full px-5 py-2 font-mono text-xs text-cyan-300 flex items-center gap-3 shadow-lg">
+                <span className="text-cyan-400 text-base leading-none">📍</span>
+                <span>CLICK GLOBE TO PIN TARGET</span>
+                <button
+                  onClick={() => setPinModeActive(false)}
+                  className="text-gray-500 hover:text-red-400 ml-1 leading-none"
+                  title="Cancel (ESC)"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Pending weapon placement banner */}
           {pendingWeapon && (
@@ -342,26 +376,103 @@ export default function KineticPage() {
 // ── EntityCountSummary ────────────────────────────────────────────────────────
 
 function EntityCountSummary() {
-  const { getWeapons, getTargets, getThreats } = useEntityGraph();
+  const { getWeapons, getTargets, getThreats, removeEntity } = useEntityGraph();
   const weapons = getWeapons();
-  const alive = weapons.filter(
-    (w) => !["DESTROYED", "IMPACTED"].includes((w.properties.suda_state as string) ?? ""),
-  );
   const targets = getTargets();
   const threats = getThreats();
 
+  const handleDeleteAsset = (id: string) => {
+    removeEntity(id);
+    fetch(`${API}/entities/${id}`, { method: "DELETE" }).catch(() => null);
+  };
+
+  // Group weapons by type, tracking alive vs destroyed per type
+  const byType = weapons.reduce<Record<string, { alive: number; total: number }>>((acc, w) => {
+    const raw = (w.properties.weapon_type as string) ?? "UNKNOWN";
+    const key = raw.replace(/_/g, " ").toUpperCase();
+    if (!acc[key]) acc[key] = { alive: 0, total: 0 };
+    acc[key].total++;
+    const state = (w.properties.suda_state as string) ?? "CRUISE";
+    if (state !== "DESTROYED" && state !== "IMPACTED") acc[key].alive++;
+    return acc;
+  }, {});
+
+  const typeEntries = Object.entries(byType);
+
   return (
     <div className="bg-[#0a1628] border border-[#1a2a40] rounded p-2 text-xs font-mono">
-      <div className="text-gray-600 text-xs mb-1.5 tracking-widest">ASSETS</div>
-      <div className="flex flex-col gap-1">
-        <div className="flex justify-between">
-          <span className="text-gray-500">Weapons</span>
-          <span className="text-blue-400">{alive.length}/{weapons.length}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">Targets</span>
-          <span className="text-red-400">{targets.length}</span>
-        </div>
+      <div className="text-gray-600 text-[9px] mb-1.5 tracking-widest">ASSETS</div>
+      <div className="flex flex-col gap-0.5">
+
+        {/* Weapons — per type summary */}
+        {typeEntries.length === 0 ? (
+          <div className="flex justify-between">
+            <span className="text-gray-500">Weapons</span>
+            <span className="text-gray-700">0</span>
+          </div>
+        ) : (
+          typeEntries.map(([type, { alive, total }]) => (
+            <div key={type} className="flex justify-between items-center gap-1">
+              <span className="text-gray-500 truncate text-[10px]" title={type}>{type}</span>
+              <span className={`shrink-0 text-[10px] ${alive < total ? "text-yellow-400" : "text-blue-400"}`}>
+                {alive}/{total}
+              </span>
+            </div>
+          ))
+        )}
+
+        {/* Individual weapon rows with delete */}
+        {weapons.length > 0 && (
+          <div className="mt-1 border-t border-[#1a2a40] pt-1 space-y-0.5">
+            {weapons.map((w) => {
+              const label = (w.properties.label as string) || (w.properties.weapon_type as string) || "Weapon";
+              const state = (w.properties.suda_state as string) ?? "CRUISE";
+              const dead = state === "DESTROYED" || state === "IMPACTED";
+              return (
+                <div key={w.id} className="flex items-center justify-between group">
+                  <span className={`truncate text-[9px] max-w-[100px] ${dead ? "text-gray-600 line-through" : "text-gray-400"}`} title={label}>
+                    {label}
+                  </span>
+                  <button
+                    onClick={() => handleDeleteAsset(w.id)}
+                    className="text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity leading-none text-[10px] shrink-0 ml-1"
+                    title="Remove asset"
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="border-t border-[#1a2a40] my-0.5" />
+
+        {/* Targets with delete */}
+        <div className="text-gray-600 text-[9px] tracking-widest mb-0.5">TARGETS</div>
+        {targets.length === 0 ? (
+          <div className="flex justify-between">
+            <span className="text-gray-500">Targets</span>
+            <span className="text-gray-700">0</span>
+          </div>
+        ) : (
+          targets.map((t) => (
+            <div key={t.id} className="flex items-center justify-between group">
+              <span className="truncate text-[9px] text-red-300 max-w-[100px]" title={(t.properties.label as string) || "Target"}>
+                {(t.properties.label as string) || "Target"}
+              </span>
+              <button
+                onClick={() => handleDeleteAsset(t.id)}
+                className="text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity leading-none text-[10px] shrink-0 ml-1"
+                title="Remove target"
+              >
+                ✕
+              </button>
+            </div>
+          ))
+        )}
+
+        <div className="border-t border-[#1a2a40] my-0.5" />
         <div className="flex justify-between">
           <span className="text-gray-500">Threats</span>
           <span className="text-orange-400">{threats.length}</span>

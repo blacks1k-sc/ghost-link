@@ -62,13 +62,23 @@ interface Props {
   planHighlights?: PlanHighlights | null;
   hoveredRouteWeapon?: string | null;
   viewAllPaths?: boolean;
+  pinTargetMode?: boolean;
+  onTargetPinned?: (lat: number, lon: number) => void;
 }
 
-export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pendingWeapon = null, onWeaponPlaced, planHighlights, hoveredRouteWeapon = null, viewAllPaths = false }: Props) {
+const MAX_TRAIL_POINTS = 120;
+
+interface WeaponTrail {
+  positions: CesiumType.Cartesian3[];
+  entity: CesiumType.Entity;
+}
+
+export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pendingWeapon = null, onWeaponPlaced, planHighlights, hoveredRouteWeapon = null, viewAllPaths = false, pinTargetMode = false, onTargetPinned }: Props) {
   const viewerRef = useRef<CesiumType.Viewer | null>(null);
   const entityRefs = useRef<Map<string, CesiumType.Entity>>(new Map());
   const planHighlightRefs = useRef<CesiumType.Entity[]>([]);
   const routeEntityRefs = useRef<Map<string, CesiumType.Entity[]>>(new Map());
+  const weaponTrailsRef = useRef<Map<string, WeaponTrail>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -76,12 +86,18 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
   const modeRef = useRef(mode);
   const pendingWeaponRef = useRef(pendingWeapon);
   const onWeaponPlacedRef = useRef(onWeaponPlaced);
+  const pinTargetModeRef = useRef(pinTargetMode);
+  const onTargetPinnedRef = useRef(onTargetPinned);
 
   const { entities, getWeapons, getTargets, getThreats, getAirbases } = useEntityGraph();
+  const getTargetsRef = useRef(getTargets);
+  useEffect(() => { getTargetsRef.current = getTargets; }, [getTargets]);
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { pendingWeaponRef.current = pendingWeapon; }, [pendingWeapon]);
   useEffect(() => { onWeaponPlacedRef.current = onWeaponPlaced; }, [onWeaponPlaced]);
+  useEffect(() => { pinTargetModeRef.current = pinTargetMode; }, [pinTargetMode]);
+  useEffect(() => { onTargetPinnedRef.current = onTargetPinned; }, [onTargetPinned]);
 
   // initDoneRef is set to true BEFORE the async import, so it survives the
   // StrictMode cleanup→remount cycle and blocks the second initialization.
@@ -120,12 +136,21 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
 
       viewer.scene.backgroundColor = Cesium.Color.BLACK;
       viewer.scene.fog.enabled = false;
-      viewer.scene.globe.enableLighting = false;
-      viewer.scene.globe.baseColor = Cesium.Color.BLACK;
+      viewer.scene.globe.enableLighting = true;
+      viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#050a12");
+      if (viewer.scene.skyAtmosphere) {
+        viewer.scene.skyAtmosphere.show = true;
+        viewer.scene.skyAtmosphere.atmosphereLightIntensity = 5.0;
+      }
 
-      // Start zoomed in enough that the globe fills most of the viewport
+      // Top-down centered view — right-click drag to tilt into 3D perspective
       viewer.camera.setView({
-        destination: Cesium.Cartesian3.fromDegrees(20, 25, 12_000_000),
+        destination: Cesium.Cartesian3.fromDegrees(50, 25, 12_000_000),
+        orientation: {
+          heading: 0,
+          pitch: Cesium.Math.toRadians(-90),
+          roll: 0,
+        },
       });
 
       viewerRef.current = viewer;
@@ -186,7 +211,9 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
               const carto = Cesium.Cartographic.fromCartesian(cartesian);
               const lat = Cesium.Math.toDegrees(carto.latitude);
               const lon = Cesium.Math.toDegrees(carto.longitude);
-              if (pendingWeaponRef.current) {
+              if (pinTargetModeRef.current) {
+                onTargetPinnedRef.current?.(lat, lon);
+              } else if (pendingWeaponRef.current) {
                 placeWeapon(lat, lon);
               } else {
                 placeTarget(lat, lon);
@@ -254,6 +281,25 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
   const placeWeapon = useCallback(async (lat: number, lon: number) => {
     const w = pendingWeaponRef.current;
     if (!w) return;
+
+    // Auto-assign nearest target so the weapon knows where to fly
+    const targets = getTargetsRef.current();
+    let target_lat = 0.0;
+    let target_lon = 0.0;
+    if (targets.length > 0) {
+      const nearest = targets.reduce((best, t) => {
+        const tLat = t.properties.lat as number;
+        const tLon = t.properties.lon as number;
+        const bLat = best.properties.lat as number;
+        const bLon = best.properties.lon as number;
+        const dThis = (tLat - lat) ** 2 + (tLon - lon) ** 2;
+        const dBest = (bLat - lat) ** 2 + (bLon - lon) ** 2;
+        return dThis < dBest ? t : best;
+      });
+      target_lat = nearest.properties.lat as number;
+      target_lon = nearest.properties.lon as number;
+    }
+
     try {
       await fetch(`${API}/entities`, {
         method: "POST",
@@ -272,6 +318,8 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
             suda_state: "CRUISE",
             evasion_capable: w.evasion_capable,
             stealth: w.stealth,
+            target_lat,
+            target_lon,
           },
         }),
       });
@@ -344,6 +392,11 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
         if (!currentIds.has(id)) {
           viewer.entities.remove(cesiumEntity);
           entityRefs.current.delete(id);
+          const trail = weaponTrailsRef.current.get(id);
+          if (trail) {
+            viewer.entities.remove(trail.entity);
+            weaponTrailsRef.current.delete(id);
+          }
         }
       }
 
@@ -365,16 +418,30 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
     };
     if (lat == null || lon == null) return;
 
-    const pos = Cesium.Cartesian3.fromDegrees(lon, lat, (alt_km as number) * 1000);
+    const altM = (alt_km as number) * 1000;
+    const pos = Cesium.Cartesian3.fromDegrees(lon, lat, altM);
     const existing = entityRefs.current.get(entity.id);
 
     if (existing) {
       (existing.position as CesiumType.ConstantPositionProperty).setValue(pos);
-      if (entity.type === "WEAPON" && existing.billboard) {
-        const suda = (entity.properties as { suda_state?: string }).suda_state ?? "CRUISE";
-        existing.billboard.color = new Cesium.ConstantProperty(
-          Cesium.Color.fromCssColorString(SUDA_COLORS[suda] ?? "#3b82f6"),
-        );
+      if (entity.type === "WEAPON") {
+        const props = entity.properties as { suda_state?: string; heading_deg?: number };
+        const suda = props.suda_state ?? "CRUISE";
+        if (existing.billboard) {
+          existing.billboard.color = new Cesium.ConstantProperty(
+            Cesium.Color.fromCssColorString(SUDA_COLORS[suda] ?? "#3b82f6"),
+          );
+          // Rotate icon to face direction of travel
+          const heading = props.heading_deg ?? 0;
+          const rotation = Math.PI / 2 - Cesium.Math.toRadians(heading);
+          existing.billboard.rotation = new Cesium.ConstantProperty(rotation);
+        }
+        // Append to flight trail
+        const trail = weaponTrailsRef.current.get(entity.id);
+        if (trail) {
+          trail.positions.push(pos);
+          if (trail.positions.length > MAX_TRAIL_POINTS) trail.positions.shift();
+        }
       }
       return;
     }
@@ -383,29 +450,40 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
 
     switch (entity.type) {
       case "WEAPON": {
-        const suda = (entity.properties as { suda_state?: string }).suda_state ?? "CRUISE";
+        const props = entity.properties as { suda_state?: string; heading_deg?: number; weapon_type?: string };
+        const suda = props.suda_state ?? "CRUISE";
         const color = Cesium.Color.fromCssColorString(SUDA_COLORS[suda] ?? "#3b82f6");
+        const heading = props.heading_deg ?? 0;
+        const rotation = Math.PI / 2 - Cesium.Math.toRadians(heading);
+
         cesiumEntity = viewer.entities.add({
           name: entity.id,
           position: pos,
           billboard: {
             image: getWeaponSvg(entity.domain),
-            width: 20,
-            height: 20,
+            width: 28,
+            height: 28,
             color,
+            rotation: new Cesium.ConstantProperty(rotation),
             heightReference: Cesium.HeightReference.NONE,
-          },
-          label: {
-            text: (entity.properties as { weapon_type?: string }).weapon_type ?? "WEAPON",
-            font: "10px monospace",
-            fillColor: Cesium.Color.WHITE,
-            outlineColor: Cesium.Color.BLACK,
-            outlineWidth: 2,
-            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-            pixelOffset: new Cesium.Cartesian2(0, -18),
-            show: false,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
+
+        // Initialise flight trail — CallbackProperty so positions array drives rendering live
+        const trailPositions: CesiumType.Cartesian3[] = [pos];
+        const trailEntity = viewer.entities.add({
+          polyline: {
+            positions: new Cesium.CallbackProperty(() => trailPositions.slice(), false),
+            width: 1.5,
+            material: new Cesium.PolylineGlowMaterialProperty({
+              glowPower: 0.15,
+              color: color.withAlpha(0.45),
+            }),
+            clampToGround: false,
+          },
+        });
+        weaponTrailsRef.current.set(entity.id, { positions: trailPositions, entity: trailEntity });
         break;
       }
 
@@ -578,22 +656,33 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
           },
         });
 
-        // Label at midpoint
-        const mid = route.waypoints[Math.floor(route.waypoints.length / 2)];
+        // Label along the line — positioned at midpoint, rotated to follow route bearing
+        const midIdx = Math.floor(route.waypoints.length / 2);
+        const mid = route.waypoints[midIdx];
+        const p1 = route.waypoints[Math.max(0, midIdx - 1)];
+        const p2 = route.waypoints[Math.min(route.waypoints.length - 1, midIdx + 1)];
+        const avgLat = ((p1.lat + p2.lat) / 2) * (Math.PI / 180);
+        const dlat = p2.lat - p1.lat;
+        const dlon = (p2.lon - p1.lon) * Math.cos(avgLat);
+        // Bearing from north (clockwise) → Cesium screen rotation (CCW from east)
+        const rotation = -(Math.atan2(dlon, dlat) - Math.PI / 2);
         const label = viewer.entities.add({
           show: false,
-          position: Cesium.Cartesian3.fromDegrees(mid.lon, mid.lat, 20000),
+          position: Cesium.Cartesian3.fromDegrees(mid.lon, mid.lat, 12000),
           label: {
-            text: `${route.weapon_type.replace(/_/g, " ")} · ${Math.round(route.total_dist_km)}km · ${mins}m`,
+            text: `${route.weapon_type.replace(/_/g, " ").toUpperCase()}  ${Math.round(route.total_dist_km)}km  ${mins}m`,
             font: "9px monospace",
             fillColor: color,
             outlineColor: Cesium.Color.BLACK,
             outlineWidth: 2,
             style: Cesium.LabelStyle.FILL_AND_OUTLINE,
             showBackground: true,
-            backgroundColor: Cesium.Color.fromCssColorString("#000000").withAlpha(0.6),
-            backgroundPadding: new Cesium.Cartesian2(5, 3),
-            pixelOffset: new Cesium.Cartesian2(0, -12),
+            backgroundColor: Cesium.Color.fromCssColorString("#000000").withAlpha(0.7),
+            backgroundPadding: new Cesium.Cartesian2(5, 2),
+            horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ...(({ rotation } as unknown) as any),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
@@ -663,7 +752,7 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
     <div
       ref={containerRef}
       className="absolute inset-0"
-      style={{ cursor: pendingWeapon ? "crosshair" : undefined }}
+      style={{ cursor: pendingWeapon || pinTargetMode ? "crosshair" : undefined }}
     />
   );
 }
@@ -674,8 +763,37 @@ function svgUri(svg: string) {
 
 function getWeaponSvg(domain: string) {
   const color = WEAPON_COLORS[domain] ?? "#3b82f6";
+  // Pointing UP (north) — billboard rotation will rotate to heading
+  if (domain === "AIR") {
+    // Cruise missile / aircraft silhouette — dart shape
+    return svgUri(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">` +
+      `<polygon points="12,1 15,10 14,10 14,18 12,23 10,18 10,10 9,10" fill="${color}"/>` +
+      `<polygon points="9,10 4,15 4,17 10,12" fill="${color}" opacity="0.8"/>` +
+      `<polygon points="15,10 20,15 20,17 14,12" fill="${color}" opacity="0.8"/>` +
+      `</svg>`,
+    );
+  }
+  if (domain === "SEA") {
+    // Naval cruise missile / torpedo — elongated with fin
+    return svgUri(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">` +
+      `<ellipse cx="12" cy="12" rx="3" ry="10" fill="${color}"/>` +
+      `<polygon points="12,2 14,7 10,7" fill="${color}"/>` +
+      `<polygon points="9,17 12,22 15,17 12,19" fill="${color}" opacity="0.7"/>` +
+      `<line x1="7" y1="15" x2="12" y2="18" stroke="${color}" stroke-width="1.5" opacity="0.7"/>` +
+      `<line x1="17" y1="15" x2="12" y2="18" stroke="${color}" stroke-width="1.5" opacity="0.7"/>` +
+      `</svg>`,
+    );
+  }
+  // LAND — ballistic missile, tall narrow cone
   return svgUri(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${color}"><polygon points="12,2 22,22 12,17 2,22" /></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">` +
+    `<polygon points="12,1 16,14 12,12 8,14" fill="${color}"/>` +
+    `<rect x="10" y="14" width="4" height="6" fill="${color}" opacity="0.9"/>` +
+    `<polygon points="8,20 10,20 10,23 8,22" fill="${color}" opacity="0.7"/>` +
+    `<polygon points="16,20 14,20 14,23 16,22" fill="${color}" opacity="0.7"/>` +
+    `</svg>`,
   );
 }
 

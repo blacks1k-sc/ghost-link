@@ -297,6 +297,7 @@ async def launch_simulation(body: LaunchRequest):
         end_ms=body.duration_s * 1000,
     )
     asyncio.ensure_future(_simulation_loop())
+    await broadcast_entity_change("sim_status", {"running": True, "sim_time_s": 0.0})
     return {"status": "launched", "sim_speed": body.sim_speed, "mission_id": mission_id}
 
 
@@ -309,6 +310,7 @@ async def stop_simulation():
             current_mission_id, graph, event_queue,
             _weapon_launch_snapshots, _last_rms_error, aborted=True,
         )
+    await broadcast_entity_change("sim_status", {"running": False, "sim_time_s": event_queue.sim_time_s})
     return {"status": "stopped"}
 
 
@@ -353,6 +355,7 @@ async def _simulation_loop():
 
     sim_running = False
     logger.info("Simulation complete at T+%.1fs", event_queue.sim_time_s)
+    await broadcast_entity_change("sim_status", {"running": False, "sim_time_s": event_queue.sim_time_s})
 
     if current_mission_id:
         await database.finish_mission(
@@ -453,11 +456,12 @@ async def _run_physics_tick():
             _last_rms_error = rms_error
             await broadcast_entity_change("tot_rms", {"rms_error_s": rms_error})
 
-        # Telemetry snapshot — every 10 ticks (= 1s sim-time)
-        if current_mission_id:
-            global _telemetry_tick_counter
-            _telemetry_tick_counter += 1
-            if _telemetry_tick_counter % 10 == 0:
+        # Telemetry snapshot + sim_time broadcast — every 10 ticks (= 1s sim-time)
+        global _telemetry_tick_counter
+        _telemetry_tick_counter += 1
+        if _telemetry_tick_counter % 10 == 0:
+            await broadcast_entity_change("sim_time", {"time_s": event_queue.sim_time_s})
+        if current_mission_id and _telemetry_tick_counter % 10 == 0:
                 telemetry_rows = []
                 for w in alive_weapons:
                     p = w.properties

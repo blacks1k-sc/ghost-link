@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useEntityGraph } from "@/stores/entityGraph";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -51,15 +51,19 @@ const PIPELINE_STEPS = [
   { color: "text-cyan-400",   label: "Greedy Carrier Placement", desc: "Iteratively places carriers to maximise target coverage within strike radius (≈63% of optimal — set-cover approximation)." },
 ];
 
-export default function PlannerChat({ onPlanResult, onWeaponHover }: {
+export default function PlannerChat({ onPlanResult, onWeaponHover, pinModeActive = false, onPinModeToggle, pinnedCoords }: {
   onPlanResult?: (plan: PlanSuggestion | null) => void;
   onWeaponHover?: (weaponType: string | null) => void;
+  pinModeActive?: boolean;
+  onPinModeToggle?: (active: boolean) => void;
+  pinnedCoords?: { lat: number; lon: number } | null;
 }) {
   const [query, setQuery]     = useState("");
   const [loading, setLoading] = useState(false);
   const [plan, setPlan]       = useState<PlanSuggestion | null>(null);
   const [error, setError]     = useState<string | null>(null);
   const [showHow, setShowHow] = useState(false);
+  const [inputMode, setInputMode] = useState<"PIN" | "COORDS">("COORDS");
 
   // Manual target form
   const [tLabel, setTLabel] = useState("");
@@ -67,6 +71,15 @@ export default function PlannerChat({ onPlanResult, onWeaponHover }: {
   const [tLon,   setTLon]   = useState("");
   const [manualTargets, setManualTargets] = useState<ManualTarget[]>([]);
   const [addingTarget, setAddingTarget]   = useState(false);
+
+  // Auto-fill lat/lon when globe pin is placed
+  useEffect(() => {
+    if (pinnedCoords) {
+      setTLat(pinnedCoords.lat.toFixed(6));
+      setTLon(pinnedCoords.lon.toFixed(6));
+      setInputMode("PIN");
+    }
+  }, [pinnedCoords]);
 
   const getTargets = useEntityGraph((s) => s.getTargets);
   const getThreats = useEntityGraph((s) => s.getThreats);
@@ -112,9 +125,11 @@ export default function PlannerChat({ onPlanResult, onWeaponHover }: {
     setAddingTarget(false);
   };
 
+  const removeEntity = useEntityGraph((s) => s.removeEntity);
+
   const handleRemoveTarget = (id: string) => {
     setManualTargets((prev) => prev.filter((t) => t.id !== id));
-    // Best-effort DELETE from entity graph
+    removeEntity(id);
     fetch(`${API}/entities/${id}`, { method: "DELETE" }).catch(() => null);
   };
 
@@ -223,13 +238,22 @@ export default function PlannerChat({ onPlanResult, onWeaponHover }: {
 
         {/* Existing entity-graph targets (read-only) */}
         {getTargets().map((t) => (
-          <div key={t.id} className="flex items-center justify-between px-2.5 py-1 border-t border-[#0f1828]">
-            <span className="text-gray-400 truncate max-w-[140px]">
+          <div key={t.id} className="flex items-center justify-between px-2.5 py-1 border-t border-[#0f1828] group">
+            <span className="text-gray-400 truncate max-w-[120px]">
               {(t.properties.label as string) || "Target"}
             </span>
-            <span className="text-gray-600 text-[9px] shrink-0">
-              {(t.properties.lat as number).toFixed(2)}, {(t.properties.lon as number).toFixed(2)}
-            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-gray-600 text-[9px]">
+                {(t.properties.lat as number).toFixed(2)}, {(t.properties.lon as number).toFixed(2)}
+              </span>
+              <button
+                onClick={() => handleRemoveTarget(t.id)}
+                className="text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity leading-none"
+                title="Remove target"
+              >
+                ✕
+              </button>
+            </div>
           </div>
         ))}
 
@@ -253,41 +277,103 @@ export default function PlannerChat({ onPlanResult, onWeaponHover }: {
         ))}
 
         {/* Add target form */}
-        <div className="border-t border-[#1a2a40] p-2 space-y-1.5 bg-[#060c18]">
-          <input
-            type="text"
-            placeholder="Label (e.g. Radar Site Alpha)"
-            value={tLabel}
-            onChange={(e) => setTLabel(e.target.value)}
-            className="w-full bg-[#0a1628] border border-[#1a2a40] focus:border-red-900 rounded px-2 py-1 text-[11px] text-white placeholder-gray-700 outline-none"
-          />
-          <div className="flex gap-1">
-            <input
-              type="text"
-              inputMode="decimal"
-              placeholder="Lat (−90 to 90)"
-              value={tLat}
-              onChange={(e) => setTLat(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleAddTarget(); }}
-              className="w-1/2 bg-[#0a1628] border border-[#1a2a40] focus:border-red-900 rounded px-2 py-1 text-[11px] text-white placeholder-gray-700 outline-none"
-            />
-            <input
-              type="text"
-              inputMode="decimal"
-              placeholder="Lon (−180 to 180)"
-              value={tLon}
-              onChange={(e) => setTLon(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleAddTarget(); }}
-              className="w-1/2 bg-[#0a1628] border border-[#1a2a40] focus:border-red-900 rounded px-2 py-1 text-[11px] text-white placeholder-gray-700 outline-none"
-            />
+        <div className="border-t border-[#1a2a40] bg-[#060c18]">
+          {/* Mode toggle tabs */}
+          <div className="flex border-b border-[#1a2a40]">
+            <button
+              onClick={() => { setInputMode("PIN"); }}
+              className={`flex-1 py-1.5 text-[9px] font-mono tracking-widest transition-colors ${
+                inputMode === "PIN"
+                  ? "bg-[#0f1e30] text-cyan-400 border-b-2 border-cyan-500"
+                  : "text-gray-600 hover:text-gray-400"
+              }`}
+            >
+              📍 PIN ON MAP
+            </button>
+            <button
+              onClick={() => { setInputMode("COORDS"); if (pinModeActive) onPinModeToggle?.(false); }}
+              className={`flex-1 py-1.5 text-[9px] font-mono tracking-widest transition-colors ${
+                inputMode === "COORDS"
+                  ? "bg-[#0f1e30] text-red-400 border-b-2 border-red-700"
+                  : "text-gray-600 hover:text-gray-400"
+              }`}
+            >
+              ⌨ COORDS
+            </button>
           </div>
-          <button
-            onClick={handleAddTarget}
-            disabled={addingTarget || isNaN(parseFloat(tLat)) || isNaN(parseFloat(tLon))}
-            className="w-full py-1 text-[10px] font-mono border border-red-900 bg-red-950/40 hover:bg-red-900/50 text-red-300 rounded tracking-widest transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {addingTarget ? "ADDING…" : "⊕  ADD TARGET"}
-          </button>
+
+          <div className="p-2 space-y-1.5">
+            {/* Label always visible */}
+            <input
+              type="text"
+              placeholder="Label (e.g. Radar Site Alpha)"
+              value={tLabel}
+              onChange={(e) => setTLabel(e.target.value)}
+              className="w-full bg-[#0a1628] border border-[#1a2a40] focus:border-red-900 rounded px-2 py-1 text-[11px] text-white placeholder-gray-700 outline-none"
+            />
+
+            {inputMode === "PIN" ? (
+              /* PIN MODE */
+              <div className="space-y-1.5">
+                {pinModeActive ? (
+                  <div className="flex items-center gap-2 px-2 py-1.5 bg-cyan-950/40 border border-cyan-800 rounded">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+                    <span className="text-cyan-300 text-[10px]">Click anywhere on the globe to place target</span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => onPinModeToggle?.(true)}
+                    className="w-full py-1.5 text-[10px] font-mono border border-cyan-800 bg-cyan-950/30 hover:bg-cyan-900/40 text-cyan-300 rounded tracking-widest transition-colors"
+                  >
+                    ACTIVATE PIN MODE
+                  </button>
+                )}
+                {tLat && tLon && (
+                  <div className="text-[10px] text-gray-400 px-1">
+                    Pinned: {parseFloat(tLat).toFixed(4)}°, {parseFloat(tLon).toFixed(4)}°
+                  </div>
+                )}
+                <button
+                  onClick={() => { handleAddTarget(); onPinModeToggle?.(false); }}
+                  disabled={addingTarget || !tLat || !tLon || isNaN(parseFloat(tLat)) || isNaN(parseFloat(tLon))}
+                  className="w-full py-1 text-[10px] font-mono border border-red-900 bg-red-950/40 hover:bg-red-900/50 text-red-300 rounded tracking-widest transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {addingTarget ? "ADDING…" : "⊕  ADD TARGET"}
+                </button>
+              </div>
+            ) : (
+              /* COORDS MODE */
+              <div className="space-y-1.5">
+                <div className="flex gap-1">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Lat (−90 to 90)"
+                    value={tLat}
+                    onChange={(e) => setTLat(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleAddTarget(); }}
+                    className="w-1/2 bg-[#0a1628] border border-[#1a2a40] focus:border-red-900 rounded px-2 py-1 text-[11px] text-white placeholder-gray-700 outline-none"
+                  />
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Lon (−180 to 180)"
+                    value={tLon}
+                    onChange={(e) => setTLon(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleAddTarget(); }}
+                    className="w-1/2 bg-[#0a1628] border border-[#1a2a40] focus:border-red-900 rounded px-2 py-1 text-[11px] text-white placeholder-gray-700 outline-none"
+                  />
+                </div>
+                <button
+                  onClick={handleAddTarget}
+                  disabled={addingTarget || isNaN(parseFloat(tLat)) || isNaN(parseFloat(tLon))}
+                  className="w-full py-1 text-[10px] font-mono border border-red-900 bg-red-950/40 hover:bg-red-900/50 text-red-300 rounded tracking-widest transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {addingTarget ? "ADDING…" : "⊕  ADD TARGET"}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
