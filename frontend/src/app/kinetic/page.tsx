@@ -62,6 +62,8 @@ interface PlanHighlights {
   carriers: Array<{ lat: number; lon: number; label: string }>;
   routes: Array<{
     weapon_type: string;
+    target_id: string;
+    airbase_id: string;
     waypoints: Array<{ lat: number; lon: number; label: string }>;
     total_dist_km: number;
     total_time_s: number;
@@ -88,6 +90,8 @@ export default function KineticPage() {
   const [viewAllPaths, setViewAllPaths] = useState(false);
   const [pinModeActive, setPinModeActive] = useState(false);
   const [pinnedTargetCoords, setPinnedTargetCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [hoveredTargetId, setHoveredTargetId] = useState<string | null>(null);
+  const [simSpeed, setSimSpeed] = useState(1);
   const { simRunning, wsConnected, simTimeS, setSimRunning } = useEntityGraph();
 
   // Sync sim status from backend on mount (handles page refresh mid-sim)
@@ -128,7 +132,17 @@ export default function KineticPage() {
   const handleStop = async () => {
     await fetch(`${API}/simulation/stop`, { method: "POST" });
     setSimRunning(false);
+    setSimSpeed(1);
     setMode("planning");
+  };
+
+  const handleSetSpeed = async (speed: number) => {
+    setSimSpeed(speed);
+    await fetch(`${API}/simulation/speed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sim_speed: speed }),
+    });
   };
 
   const formatSimTime = (s: number) => {
@@ -224,12 +238,30 @@ export default function KineticPage() {
               LAUNCH
             </button>
           ) : (
-            <button
-              onClick={handleStop}
-              className="px-4 py-1 text-xs font-mono bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded text-gray-300 tracking-widest transition-colors"
-            >
-              STOP SIM
-            </button>
+            <div className="flex items-center gap-1">
+              {/* Speed multiplier buttons */}
+              <div className="flex items-center border border-[#1a2a40] rounded overflow-hidden">
+                {([1, 2, 5, 8] as const).map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => handleSetSpeed(s)}
+                    className={`px-2 py-1 text-[10px] font-mono transition-colors ${
+                      simSpeed === s
+                        ? "bg-amber-700 text-amber-100 border-amber-500"
+                        : "bg-[#0a1628] text-gray-500 hover:text-amber-300"
+                    }`}
+                  >
+                    {s}×
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={handleStop}
+                className="px-4 py-1 text-xs font-mono bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded text-gray-300 tracking-widest transition-colors"
+              >
+                STOP SIM
+              </button>
+            </div>
           )}
         </div>
       </header>
@@ -273,6 +305,8 @@ export default function KineticPage() {
                       carriers: p.carrier_positions,
                       routes: p.routes.map((r) => ({
                         weapon_type: r.weapon_type,
+                        target_id: r.target_id,
+                        airbase_id: r.airbase_id,
                         waypoints: r.waypoints,
                         total_dist_km: r.total_dist_km,
                         total_time_s: r.total_time_s,
@@ -307,6 +341,7 @@ export default function KineticPage() {
               setPinnedTargetCoords({ lat, lon });
               setPinModeActive(false);
             }}
+            onTargetHover={setHoveredTargetId}
           />
 
           {/* Top-right overlays */}
@@ -344,6 +379,34 @@ export default function KineticPage() {
               </div>
             </div>
           )}
+
+          {/* Target hover tooltip — shows assigned weapons + launch bases */}
+          {hoveredTargetId && planHighlights && (() => {
+            const routes = planHighlights.routes.filter((r) => r.target_id === hoveredTargetId);
+            if (routes.length === 0) return null;
+            const bases = planHighlights.airbases;
+            const carriers = planHighlights.carriers;
+            return (
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+                <div className="bg-[#060c18]/95 border border-cyan-800 rounded px-3 py-2 font-mono text-[10px] shadow-lg min-w-[200px]">
+                  <div className="text-cyan-500 tracking-widest mb-1.5">INCOMING ASSETS</div>
+                  {routes.map((r, i) => {
+                    const ab = bases.find((b) => b.id === r.airbase_id);
+                    const carrier = carriers.find((c) => `carrier_${carriers.indexOf(c)}` === r.airbase_id);
+                    const baseName = ab?.name ?? carrier?.label ?? r.airbase_id;
+                    return (
+                      <div key={i} className="flex items-center gap-2 py-0.5 border-t border-[#1a2a40] first:border-0">
+                        <span className="text-blue-300 font-bold">{r.weapon_type.replace(/_/g, " ").toUpperCase()}</span>
+                        <span className="text-gray-600">←</span>
+                        <span className="text-gray-400 truncate">{baseName}</span>
+                        <span className="text-gray-600 ml-auto shrink-0">{Math.round(r.total_dist_km)} km</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Pending weapon placement banner */}
           {pendingWeapon && (

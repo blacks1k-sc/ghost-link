@@ -545,11 +545,10 @@ async def generate_plan(
     )
     airbases_for_assignment = list(base_pool) + carrier_entries
 
-    weapon_specs = build_weapon_specs(weapon_type_ids, target_specs, airbases_for_assignment, weapon_catalog)
-
-    # Ensure we have at least as many weapon instances as targets
-    while weapon_specs and len(weapon_specs) < len(target_specs):
-        weapon_specs.extend(weapon_specs[:len(target_specs) - len(weapon_specs)])
+    weapon_specs = build_weapon_specs(
+        weapon_type_ids, target_specs, airbases_for_assignment, weapon_catalog,
+        instances_needed=max(len(target_specs), len(weapon_type_ids)),
+    )
 
     assignment_results: list[AssignmentResult] = []
     if weapon_specs and target_specs:

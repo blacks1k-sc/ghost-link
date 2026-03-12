@@ -64,6 +64,7 @@ interface Props {
   viewAllPaths?: boolean;
   pinTargetMode?: boolean;
   onTargetPinned?: (lat: number, lon: number) => void;
+  onTargetHover?: (targetId: string | null) => void;
 }
 
 const MAX_TRAIL_POINTS = 120;
@@ -73,7 +74,7 @@ interface WeaponTrail {
   entity: CesiumType.Entity;
 }
 
-export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pendingWeapon = null, onWeaponPlaced, planHighlights, hoveredRouteWeapon = null, viewAllPaths = false, pinTargetMode = false, onTargetPinned }: Props) {
+export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pendingWeapon = null, onWeaponPlaced, planHighlights, hoveredRouteWeapon = null, viewAllPaths = false, pinTargetMode = false, onTargetPinned, onTargetHover }: Props) {
   const viewerRef = useRef<CesiumType.Viewer | null>(null);
   const entityRefs = useRef<Map<string, CesiumType.Entity>>(new Map());
   const planHighlightRefs = useRef<CesiumType.Entity[]>([]);
@@ -88,16 +89,24 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
   const onWeaponPlacedRef = useRef(onWeaponPlaced);
   const pinTargetModeRef = useRef(pinTargetMode);
   const onTargetPinnedRef = useRef(onTargetPinned);
+  const onTargetHoverRef = useRef(onTargetHover);
 
   const { entities, getWeapons, getTargets, getThreats, getAirbases } = useEntityGraph();
   const getTargetsRef = useRef(getTargets);
   useEffect(() => { getTargetsRef.current = getTargets; }, [getTargets]);
+
+  // Keep a fast-lookup Set of target entity IDs for use in the MOUSE_MOVE handler
+  const targetIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    targetIdsRef.current = new Set(getTargets().map((t) => t.id));
+  }, [entities]);
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { pendingWeaponRef.current = pendingWeapon; }, [pendingWeapon]);
   useEffect(() => { onWeaponPlacedRef.current = onWeaponPlaced; }, [onWeaponPlaced]);
   useEffect(() => { pinTargetModeRef.current = pinTargetMode; }, [pinTargetMode]);
   useEffect(() => { onTargetPinnedRef.current = onTargetPinned; }, [onTargetPinned]);
+  useEffect(() => { onTargetHoverRef.current = onTargetHover; }, [onTargetHover]);
 
   // initDoneRef is set to true BEFORE the async import, so it survives the
   // StrictMode cleanup→remount cycle and blocks the second initialization.
@@ -238,6 +247,21 @@ export default function CesiumGlobe({ mode, onEntitySelect, selectedEntityId, pe
           );
         }
       }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
+
+      // Mouse move — hover detection for target entities
+      clickHandler.setInputAction((move: { endPosition: CesiumType.Cartesian2 }) => {
+        const picked = viewer.scene.pick(move.endPosition);
+        if (Cesium.defined(picked) && picked.id) {
+          const entityId = (picked.id as CesiumType.Entity).name;
+          if (entityId && targetIdsRef.current.has(entityId)) {
+            onTargetHoverRef.current?.(entityId);
+          } else {
+            onTargetHoverRef.current?.(null);
+          }
+        } else {
+          onTargetHoverRef.current?.(null);
+        }
+      }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
     });
 
     return () => {

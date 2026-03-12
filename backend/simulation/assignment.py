@@ -251,35 +251,97 @@ def find_best_airbase(
     return best
 
 
+def find_feasible_airbases(
+    weapon_type_id: str,
+    targets: list[TargetSpec],
+    candidate_airbases: list[dict],
+    weapon_catalog: dict | None = None,
+    max_bases: int = 5,
+) -> list[dict]:
+    """
+    Return up to max_bases airbases feasible for this weapon type.
+    Each base must be within weapon range of at least one target.
+    Sorted by target coverage count (desc) then distance to centroid (asc).
+    """
+    if weapon_catalog is None:
+        weapon_catalog = _load_weapons_catalog()
+
+    spec = next(
+        (w for w in weapon_catalog.get("weapons", []) if w["id"] == weapon_type_id),
+        None,
+    )
+    if spec is None:
+        return []
+
+    domain = spec.get("domain", "AIR")
+    max_range = spec["range_km"] * 1.1
+
+    avg_lat = sum(t.lat for t in targets) / max(len(targets), 1)
+    avg_lon = sum(t.lon for t in targets) / max(len(targets), 1)
+
+    candidates: list[tuple[dict, int, float]] = []
+    for ab in candidate_airbases:
+        ab_is_carrier = ab.get("is_carrier", False)
+        if domain == "SEA" and not ab_is_carrier:
+            continue
+        if domain == "AIR" and ab_is_carrier and weapon_type_id not in _CARRIER_COMPATIBLE_AIR_WEAPONS:
+            continue
+
+        covered = sum(
+            1 for t in targets
+            if haversine_km(ab["lat"], ab["lon"], t.lat, t.lon) <= max_range
+        )
+        if covered > 0:
+            dist = haversine_km(ab["lat"], ab["lon"], avg_lat, avg_lon)
+            candidates.append((ab, covered, dist))
+
+    candidates.sort(key=lambda x: (-x[1], x[2]))
+    return [ab for ab, _, _ in candidates[:max_bases]]
+
+
 def build_weapon_specs(
     weapon_type_ids: list[str],
     targets: list[TargetSpec],
     airbases: list[dict],
     weapon_catalog: dict | None = None,
+    instances_needed: int = 1,
 ) -> list[WeaponSpec]:
     """
-    For each requested weapon type, build a WeaponSpec with the best
-    airbase for its (average) target set.
+    Build WeaponSpecs distributed across multiple feasible airbases.
 
-    Returns only feasible weapon specs (those that can reach at least
-    one target from some airbase).
+    For each weapon type, finds up to 3 feasible airbases (not just the single
+    closest one). Generates (weapon_type × airbase) pairs, then cycles through
+    them until instances_needed specs are produced.
+
+    This ensures load is spread across multiple launch platforms rather than
+    concentrating all sorties at a single base.
     """
     if weapon_catalog is None:
         weapon_catalog = _load_weapons_catalog()
 
-    # Average target position — used to find best airbase
-    avg_lat = sum(t.lat for t in targets) / max(len(targets), 1)
-    avg_lon = sum(t.lon for t in targets) / max(len(targets), 1)
-    avg_target = TargetSpec(target_id="_avg", lat=avg_lat, lon=avg_lon)
-
-    specs: list[WeaponSpec] = []
+    # Build (weapon_type, airbase) pairs — up to 3 bases per weapon type
+    pairs: list[tuple[str, dict]] = []
     for wt_id in weapon_type_ids:
         raw = next((w for w in weapon_catalog.get("weapons", []) if w["id"] == wt_id), None)
         if raw is None:
             continue
-        ab = find_best_airbase(wt_id, avg_target, airbases, weapon_catalog)
-        if ab is None:
-            continue  # no airbase in range — skip this weapon type
+        feasible_bases = find_feasible_airbases(wt_id, targets, airbases, weapon_catalog, max_bases=3)
+        if not feasible_bases:
+            continue
+        for ab in feasible_bases:
+            pairs.append((wt_id, ab))
+
+    if not pairs:
+        return []
+
+    # Cycle through pairs until we have enough instances
+    needed = max(instances_needed, len(pairs))
+    specs: list[WeaponSpec] = []
+    for i in range(needed):
+        wt_id, ab = pairs[i % len(pairs)]
+        raw = next((w for w in weapon_catalog.get("weapons", []) if w["id"] == wt_id), None)
+        if raw is None:
+            continue
         specs.append(WeaponSpec(
             weapon_type=wt_id,
             range_km=raw["range_km"],

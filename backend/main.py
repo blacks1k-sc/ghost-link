@@ -314,6 +314,16 @@ async def stop_simulation():
     return {"status": "stopped"}
 
 
+@app.post("/simulation/speed")
+async def set_simulation_speed(body: dict):
+    global sim_speed_multiplier
+    speed = float(body.get("sim_speed", 1.0))
+    if speed <= 0:
+        raise HTTPException(400, "sim_speed must be > 0")
+    sim_speed_multiplier = speed
+    return {"status": "ok", "sim_speed": sim_speed_multiplier}
+
+
 @app.get("/simulation/status")
 def simulation_status():
     return {
