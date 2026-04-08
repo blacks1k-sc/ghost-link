@@ -1,46 +1,101 @@
 @import "tailwindcss";
 
-/* ── JetBrains Mono ───────────────────────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap');
+/* ── Syne + JetBrains Mono ────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
 
 @theme {
+  /* Syne for all UI labels, headings, navigation  */
+  --font-family-sans: 'Syne', ui-sans-serif, 'Helvetica Neue', sans-serif;
+  /* JetBrains Mono for data values only */
   --font-family-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
 }
 
-/* ── Design tokens ────────────────────────────────────────────────────────── */
+/* ── Bicolor design system ────────────────────────────────────────────────── */
+/* Two zones: LINEN (panels, bars) and INK (globe, log, dark surfaces)        */
 :root {
-  /* App chrome (NOT panel surfaces) */
-  --app-bg:    #010a16;
-  --bar-bg:    rgba(4, 12, 26, 0.92);
-  --bar-blur:  blur(24px) saturate(160%);
+  /* ── LINEN zone — warm off-white, paper-like ── */
+  --linen:    #edeae3;   /* primary panel surface */
+  --linen-2:  #e2dfd7;   /* nested cards, accordion bg */
+  --linen-3:  #d5d1c9;   /* borders, dividers */
+  --linen-4:  #c5c0b7;   /* strong dividers */
 
-  /* Glass panel surfaces — applied over the globe, must be translucent */
-  --gp-bg:     rgba(10, 20, 42, 0.78);
-  --gp-blur:   blur(28px) saturate(180%);
-  --gp-border: rgba(255, 255, 255, 0.08);
-  --gp-radius: 10px;
-  --gp-shadow:
-    0 12px 52px rgba(0, 0, 0, 0.60),
-    0  3px 14px rgba(0, 0, 0, 0.40),
-    inset 0  1px 0 rgba(255, 255, 255, 0.11),
-    inset 0 -1px 0 rgba(0,   0,   0,   0.20);
+  /* ── INK zone — warm black ── */
+  --ink:      #19150f;   /* primary text (very dark warm brown-black) */
+  --ink-2:    #5a5349;   /* secondary text */
+  --ink-3:    #9a9188;   /* muted / labels */
+  --ink-4:    #bfb9b1;   /* ghost / disabled */
 
-  /* Section divider inside panels */
-  --gp-divider: rgba(255, 255, 255, 0.05);
+  /* ── Semantic accents — earth-toned, desaturated ── */
+  --ac-blue:   #1a5fa8;  /* interactive */
+  --ac-amber:  #8a4a08;  /* caution */
+  --ac-red:    #8a1a18;  /* hostile / threat */
+  --ac-green:  #1a6030;  /* converged / safe */
 
-  /* Text — four stops, cool-white family */
-  --t1: #dce8f8;   /* primary content */
-  --t2: #7090b0;   /* labels / secondary */
-  --t3: #364e68;   /* muted / timestamps */
-  --t4: #1a3050;   /* ghost / disabled */
+  /* Light accent values (for dim backgrounds on linen surface) */
+  --ac-blue-dim:   rgba(26,95,168,0.09);
+  --ac-amber-dim:  rgba(138,74,8,0.09);
+  --ac-red-dim:    rgba(138,26,24,0.09);
+  --ac-green-dim:  rgba(26,96,48,0.09);
 
-  /* Accents — each color has ONE semantic role */
-  --ac-blue:   #4a9aff;   /* interactive elements */
-  --ac-cyan:   #14c8e8;   /* live telemetry data */
-  --ac-amber:  #d08820;   /* caution / speed */
-  --ac-red:    #d83838;   /* hostile / launch / threat */
-  --ac-green:  #1ab858;   /* converged / safe */
-  --ac-purple: #7848e8;   /* stealth / EW */
+  /* ── App globals ── */
+  --app-bg:   #0c0b09;   /* globe / ink zone background */
+}
+
+/* ── Panels — warm opaque paper surfaces, NOT glass ─────────────────────── */
+/* Use on elements that sit alongside or overlay the dark globe               */
+.lp {
+  background:   var(--linen);
+  border:       1px solid var(--linen-3);
+  border-top:   2px solid var(--ink);        /* thick ink top-edge accent */
+  border-radius: 2px;
+  box-shadow:   0 8px 48px rgba(0,0,0,0.28),
+                0 2px  8px rgba(0,0,0,0.14);
+}
+
+/* Nested card within a linen panel (slightly darker surface) */
+.lp-card {
+  background:   var(--linen-2);
+  border:       1px solid var(--linen-3);
+  border-radius: 2px;
+}
+
+/* Linen bar — full-width chrome elements (top nav, bottom log header) */
+.linen-bar {
+  background:   var(--linen);
+  border-bottom: 1px solid var(--linen-3);
+}
+
+/* Ink bar — full-width dark zone (bottom engagement log) */
+.ink-bar {
+  background:   #171410;
+  border-top:   1px solid rgba(255,255,255,0.06);
+}
+
+/* ── Section label ────────────────────────────────────────────────────────── */
+.gl-label {
+  font-family:    'Syne', ui-sans-serif, sans-serif;
+  font-size:      9px;
+  font-weight:    600;
+  letter-spacing: 0.20em;
+  text-transform: uppercase;
+  color:          var(--ink-3);
+}
+
+/* gl-label variant for INK (dark) surfaces */
+.gl-label-inv {
+  font-family:    'Syne', ui-sans-serif, sans-serif;
+  font-size:      9px;
+  font-weight:    600;
+  letter-spacing: 0.20em;
+  text-transform: uppercase;
+  color:          rgba(237,234,227,0.40);
+}
+
+/* Panel internal divider */
+.lp-div {
+  height:     1px;
+  background: var(--linen-3);
+  margin:     0 16px;
 }
 
 /* ── Base ─────────────────────────────────────────────────────────────────── */
@@ -49,89 +104,57 @@ html, body {
   margin: 0;
   padding: 0;
   background: var(--app-bg);
-  color: var(--t1);
+  color: var(--ink);
+  font-family: 'Syne', ui-sans-serif, sans-serif;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
 
-/* ── Cesium canvas fill ──────────────────────────────────────────────────── */
+/* ── Cesium canvas ───────────────────────────────────────────────────────── */
 .cesium-widget,
 .cesium-widget canvas {
-  width: 100% !important;
-  height: 100% !important;
+  width:    100% !important;
+  height:   100% !important;
   position: absolute !important;
-  top: 0 !important;
+  top:  0 !important;
   left: 0 !important;
 }
 
-/* ── Glass panel — core surface system ───────────────────────────────────── */
-/* Use for any panel floating over the Cesium globe */
-.gp {
-  background:             var(--gp-bg);
-  backdrop-filter:        var(--gp-blur);
-  -webkit-backdrop-filter: var(--gp-blur);
-  border:                 1px solid var(--gp-border);
-  border-radius:          var(--gp-radius);
-  box-shadow:             var(--gp-shadow);
+/* ── Tactical corner bracket ─────────────────────────────────────────────── */
+/* L-shaped corner marks for the globe display — Anduril-style             */
+.bracket-tl,
+.bracket-tr,
+.bracket-bl,
+.bracket-br {
+  position: absolute;
+  width:  18px;
+  height: 18px;
+  pointer-events: none;
 }
-
-/* Glass bar — full-width chrome (header, footer) */
-.gbar {
-  background:             var(--bar-bg);
-  backdrop-filter:        var(--bar-blur);
-  -webkit-backdrop-filter: var(--bar-blur);
-  border-bottom:          1px solid rgba(255, 255, 255, 0.06);
-  box-shadow:             0 2px 32px rgba(0, 0, 0, 0.65),
-                          inset 0 -1px 0 rgba(0, 0, 0, 0.3);
-}
-
-/* Glass bar — bottom variant */
-.gbar-top {
-  background:             var(--bar-bg);
-  backdrop-filter:        var(--bar-blur);
-  -webkit-backdrop-filter: var(--bar-blur);
-  border-top:             1px solid rgba(255, 255, 255, 0.06);
-  box-shadow:             0 -2px 32px rgba(0, 0, 0, 0.65),
-                          inset 0 1px 0 rgba(255, 255, 255, 0.05);
-}
-
-/* Section header label — strict 9px caps */
-.gl-label {
-  font-size: 9px;
-  font-family: var(--font-family-mono, monospace);
-  letter-spacing: 0.20em;
-  text-transform: uppercase;
-  color: var(--t3);
-}
-
-/* Panel inner section divider */
-.gp-div {
-  height: 1px;
-  background: var(--gp-divider);
-  margin: 0 12px;
-}
+.bracket-tl { top:  10px; left:  10px; border-top:  1.5px solid rgba(255,255,255,0.30); border-left: 1.5px solid rgba(255,255,255,0.30); }
+.bracket-tr { top:  10px; right: 10px; border-top:  1.5px solid rgba(255,255,255,0.30); border-right:1.5px solid rgba(255,255,255,0.30); }
+.bracket-bl { bottom:10px; left: 10px; border-bottom:1.5px solid rgba(255,255,255,0.30); border-left: 1.5px solid rgba(255,255,255,0.30); }
+.bracket-br { bottom:10px; right:10px; border-bottom:1.5px solid rgba(255,255,255,0.30); border-right:1.5px solid rgba(255,255,255,0.30); }
 
 /* ── Animations ──────────────────────────────────────────────────────────── */
-@keyframes launchPulse {
-  0%, 100% { box-shadow: var(--gp-shadow), 0 0 0 0 rgba(216, 56, 56, 0); }
-  50%       { box-shadow: var(--gp-shadow), 0 0 14px 3px rgba(216, 56, 56, 0.28); }
+@keyframes panelReveal {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-.launch-pulse { animation: launchPulse 2.8s ease-in-out infinite; }
+.panel-enter { animation: panelReveal 0.16s ease-out; }
 
-@keyframes offlineBlink {
+@keyframes dot-pulse {
   0%, 100% { opacity: 1; }
-  50%       { opacity: 0.35; }
+  50%       { opacity: 0.3; }
 }
-.offline-blink { animation: offlineBlink 1.8s ease-in-out infinite; }
+.dot-pulse { animation: dot-pulse 1.8s ease-in-out infinite; }
 
-@keyframes fadeSlideIn {
-  from { opacity: 0; transform: translateX(-8px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-.panel-enter { animation: fadeSlideIn 0.18s ease-out; }
-
-/* ── Scrollbar — ultra-thin ──────────────────────────────────────────────── */
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
+/* Linen scrollbar (light surfaces) */
 ::-webkit-scrollbar         { width: 2px; height: 2px; }
 ::-webkit-scrollbar-track   { background: transparent; }
-::-webkit-scrollbar-thumb   { background: rgba(255,255,255,0.10); border-radius: 1px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }
+::-webkit-scrollbar-thumb   { background: var(--linen-3); border-radius: 1px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-4); }
+
+/* ── Input focus ring removal ────────────────────────────────────────────── */
+input:focus { outline: none; }
