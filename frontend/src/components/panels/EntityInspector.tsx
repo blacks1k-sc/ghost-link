@@ -2,28 +2,28 @@
 
 import { useEntityGraph } from "@/stores/entityGraph";
 
-const SUDA_BADGE: Record<string, { label: string; cls: string }> = {
-  CRUISE:     { label: "CRUISE",     cls: "bg-blue-900 text-blue-300" },
-  EVADING:    { label: "EVADING",    cls: "bg-yellow-900 text-yellow-300" },
-  REALIGNING: { label: "REALIGNING", cls: "bg-orange-900 text-orange-300" },
-  TERMINAL:   { label: "TERMINAL",   cls: "bg-red-900 text-red-300" },
-  DESTROYED:  { label: "DESTROYED",  cls: "bg-gray-800 text-gray-500" },
-  IMPACTED:   { label: "IMPACTED",   cls: "bg-green-900 text-green-300" },
+const SUDA_META: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  CRUISE:     { label: "CRUISE",     color: "#4a9aff",             bg: "rgba(74,154,255,0.10)",  border: "rgba(74,154,255,0.28)" },
+  EVADING:    { label: "EVADING",    color: "var(--ac-amber)",     bg: "rgba(208,136,32,0.10)",  border: "rgba(208,136,32,0.28)" },
+  REALIGNING: { label: "REALIGNING", color: "#c09020",             bg: "rgba(192,144,32,0.10)",  border: "rgba(192,144,32,0.25)" },
+  TERMINAL:   { label: "TERMINAL",   color: "var(--ac-red)",       bg: "rgba(216,56,56,0.10)",   border: "rgba(216,56,56,0.28)" },
+  DESTROYED:  { label: "DESTROYED",  color: "var(--t4)",           bg: "rgba(255,255,255,0.03)", border: "rgba(255,255,255,0.06)" },
+  IMPACTED:   { label: "IMPACTED",   color: "var(--ac-green)",     bg: "rgba(26,184,88,0.10)",   border: "rgba(26,184,88,0.28)" },
 };
 
-interface Props {
-  entityId: string;
-  onClose: () => void;
-}
+interface Props { entityId: string; onClose: () => void; }
 
 export default function EntityInspector({ entityId, onClose }: Props) {
   const entity = useEntityGraph((s) => s.getEntity(entityId));
 
   if (!entity) {
     return (
-      <div className="p-4 font-mono text-sm text-gray-500">
+      <div className="p-4 font-mono text-[10px]" style={{ color: "var(--t3)" }}>
         Entity not found.
-        <button onClick={onClose} className="block mt-2 text-gray-600 hover:text-white">
+        <button onClick={onClose} className="block mt-2 transition-colors duration-150"
+          style={{ color: "var(--t4)" }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = "var(--t1)")}
+          onMouseLeave={(e) => (e.currentTarget.style.color = "var(--t4)")}>
           ✕ Close
         </button>
       </div>
@@ -32,102 +32,138 @@ export default function EntityInspector({ entityId, onClose }: Props) {
 
   const p = entity.properties as Record<string, unknown>;
   const sudaState = (p.suda_state as string) ?? "CRUISE";
-  const sudaBadge = SUDA_BADGE[sudaState] ?? SUDA_BADGE.CRUISE;
-
-  const tauI = typeof p.tau_i === "number" ? p.tau_i : null;
-  const fuelPct = typeof p.fuel_pct === "number" ? p.fuel_pct * 100 : null;
+  const sudaMeta = SUDA_META[sudaState] ?? SUDA_META.CRUISE;
+  const tauI    = typeof p.tau_i     === "number" ? p.tau_i     : null;
+  const fuelPct = typeof p.fuel_pct  === "number" ? p.fuel_pct * 100 : null;
 
   return (
-    <div className="p-3 font-mono text-xs text-gray-300 flex flex-col gap-3">
+    <div className="font-mono">
+
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between px-4 py-3.5"
+        style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
         <div>
-          <div className="text-gray-500 text-xs">{entity.type} · {entity.domain}</div>
-          <div className="text-white font-bold text-sm">
+          <div className="text-[8px] tracking-[0.16em] mb-1 uppercase"
+            style={{ color: "var(--t3)" }}>
+            {entity.type} · {entity.domain}
+          </div>
+          <div className="text-[14px] font-semibold leading-tight" style={{ color: "var(--t1)" }}>
             {(p.weapon_type as string) ?? (p.label as string) ?? entityId.slice(0, 8)}
           </div>
         </div>
-        <button onClick={onClose} className="text-gray-600 hover:text-white text-lg leading-none">
+        <button onClick={onClose}
+          className="text-[12px] leading-none transition-colors duration-150 mt-0.5"
+          style={{ color: "var(--t3)" }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = "var(--t1)")}
+          onMouseLeave={(e) => (e.currentTarget.style.color = "var(--t3)")}>
           ✕
         </button>
       </div>
 
-      {/* SUDA state badge */}
-      {entity.type === "WEAPON" && (
-        <div>
-          <div className="text-gray-500 mb-1">SUDA STATE</div>
-          <span className={`px-2 py-0.5 rounded text-xs font-bold ${sudaBadge.cls}`}>
-            {sudaBadge.label}
-          </span>
-        </div>
-      )}
+      <div className="px-4 py-3 space-y-4">
 
-      {/* τ_i gauge */}
-      {tauI !== null && (
-        <div>
-          <div className="text-gray-500 mb-1">TIME-TO-GO (τᵢ)</div>
-          <div className="text-cyan-300 text-lg font-bold">{tauI.toFixed(1)}s</div>
-        </div>
-      )}
-
-      {/* Fuel bar */}
-      {fuelPct !== null && (
-        <div>
-          <div className="text-gray-500 mb-1">FUEL</div>
-          <div className="w-full bg-gray-800 rounded-full h-2">
-            <div
-              className="h-2 rounded-full transition-all"
-              style={{
-                width: `${fuelPct}%`,
-                backgroundColor: fuelPct > 50 ? "#22c55e" : fuelPct > 20 ? "#eab308" : "#ef4444",
-              }}
-            />
+        {/* SUDA state */}
+        {entity.type === "WEAPON" && (
+          <div>
+            <div className="gl-label mb-2">SUDA State</div>
+            <span className="font-mono text-[9px] font-semibold px-2.5 py-1 rounded tracking-[0.12em]"
+              style={{ color: sudaMeta.color, background: sudaMeta.bg, border: `1px solid ${sudaMeta.border}` }}>
+              {sudaMeta.label}
+            </span>
           </div>
-          <div className="text-gray-400 mt-0.5">{fuelPct.toFixed(0)}%</div>
-        </div>
-      )}
+        )}
 
-      {/* Position */}
-      {p.lat != null && (
-        <div>
-          <div className="text-gray-500 mb-1">POSITION</div>
-          <div className="text-gray-300">
-            {(p.lat as number).toFixed(3)}°N {(p.lon as number).toFixed(3)}°E
+        {/* τ_i */}
+        {tauI !== null && (
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 14 }}>
+            <div className="gl-label mb-1.5">Time-to-Go (τᵢ)</div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="font-mono font-semibold tabular-nums" style={{ fontSize: 20, color: "var(--ac-cyan)" }}>
+                {tauI.toFixed(1)}
+              </span>
+              <span className="font-mono text-[10px]" style={{ color: "var(--t3)" }}>s</span>
+            </div>
           </div>
-          {p.alt_km != null && (
-            <div className="text-gray-500">{((p.alt_km as number) * 1000).toFixed(0)}m MSL</div>
-          )}
-        </div>
-      )}
+        )}
 
-      {/* Speed */}
-      {p.speed_mach != null && (
-        <div>
-          <div className="text-gray-500 mb-1">SPEED</div>
-          <div className="text-gray-300">Mach {(p.speed_mach as number).toFixed(2)}</div>
-        </div>
-      )}
-
-      {/* P_intercept (threats) */}
-      {entity.type === "THREAT" && p.p_intercept_base != null && (
-        <div>
-          <div className="text-gray-500 mb-1">P(INTERCEPT)</div>
-          <div className="text-red-400 font-bold">
-            {((p.p_intercept_base as number) * 100).toFixed(0)}%
+        {/* Fuel */}
+        {fuelPct !== null && (
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 14 }}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="gl-label">Fuel</div>
+              <span className="font-mono text-[10px] tabular-nums" style={{ color: "var(--t2)" }}>
+                {fuelPct.toFixed(0)}%
+              </span>
+            </div>
+            <div className="h-1 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
+              <div
+                className="h-full rounded-full transition-all duration-400"
+                style={{
+                  width: `${fuelPct}%`,
+                  background: fuelPct > 50 ? "var(--ac-green)" : fuelPct > 20 ? "var(--ac-amber)" : "var(--ac-red)",
+                }}
+              />
+            </div>
           </div>
-          <div className="text-gray-500">Radius: {p.radius_km as number}km</div>
-        </div>
-      )}
+        )}
 
-      {/* Raw properties (debug) */}
-      <details className="mt-2">
-        <summary className="text-gray-600 cursor-pointer hover:text-gray-400">
-          Raw properties
-        </summary>
-        <pre className="text-gray-600 text-xs mt-1 overflow-x-auto">
-          {JSON.stringify(p, null, 2)}
-        </pre>
-      </details>
+        {/* Position */}
+        {p.lat != null && (
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 14 }}>
+            <div className="gl-label mb-2">Position</div>
+            <div className="space-y-0.5">
+              <div className="font-mono text-[11px] tabular-nums" style={{ color: "var(--t1)" }}>
+                {(p.lat as number).toFixed(4)}° N
+              </div>
+              <div className="font-mono text-[11px] tabular-nums" style={{ color: "var(--t1)" }}>
+                {(p.lon as number).toFixed(4)}° E
+              </div>
+              {p.alt_km != null && (
+                <div className="font-mono text-[9px] tabular-nums mt-1" style={{ color: "var(--t3)" }}>
+                  {((p.alt_km as number) * 1000).toFixed(0)} m MSL
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Speed */}
+        {p.speed_mach != null && (
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 14 }}>
+            <div className="gl-label mb-1.5">Speed</div>
+            <div className="font-mono text-[11px]" style={{ color: "var(--t1)" }}>
+              Mach <span className="tabular-nums">{(p.speed_mach as number).toFixed(2)}</span>
+            </div>
+          </div>
+        )}
+
+        {/* P(intercept) — threats */}
+        {entity.type === "THREAT" && p.p_intercept_base != null && (
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 14 }}>
+            <div className="gl-label mb-1.5">P(Intercept)</div>
+            <div className="font-mono font-semibold tabular-nums" style={{ fontSize: 18, color: "var(--ac-red)" }}>
+              {((p.p_intercept_base as number) * 100).toFixed(0)}%
+            </div>
+            <div className="font-mono text-[9px] mt-0.5" style={{ color: "var(--t3)" }}>
+              Radius: {p.radius_km as number} km
+            </div>
+          </div>
+        )}
+
+        {/* Raw properties */}
+        <details style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 12 }}>
+          <summary className="font-mono text-[9px] cursor-pointer tracking-[0.12em] uppercase transition-colors duration-150"
+            style={{ color: "var(--t4)" }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = "var(--t2)")}
+            onMouseLeave={(e) => (e.currentTarget.style.color = "var(--t4)")}>
+            Raw Properties
+          </summary>
+          <pre className="font-mono text-[8px] mt-2 overflow-x-auto leading-relaxed"
+            style={{ color: "var(--t4)" }}>
+            {JSON.stringify(p, null, 2)}
+          </pre>
+        </details>
+      </div>
     </div>
   );
 }

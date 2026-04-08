@@ -51,6 +51,13 @@ sim_running = False
 sim_speed_multiplier = 1.0
 TICK_INTERVAL_MS = 100.0  # 100ms sim-time per tick
 
+# Track which target (lat, lon) positions have already been hit this mission.
+# Used by _reassign_to_next_target to prevent weapons looping back to destroyed targets.
+_hit_target_positions: set[tuple[float, float]] = set()
+
+# Weapons pending reassignment on the NEXT tick (allows IMPACTED broadcast to go out first).
+_pending_reassignments: list[tuple[str, float, float]] = []  # [(weapon_id, hit_lat, hit_lon)]
+
 # DB persistence state
 current_mission_id: str | None = None
 _weapon_launch_snapshots: dict[str, dict] = {}  # weapon_id → initial properties
@@ -252,6 +259,7 @@ class LaunchRequest(BaseModel):
 async def launch_simulation(body: LaunchRequest):
     global sim_running, sim_speed_multiplier, current_mission_id
     global _weapon_launch_snapshots, _telemetry_tick_counter, _last_rms_error
+    global _hit_target_positions, _pending_reassignments
     if sim_running:
         raise HTTPException(400, "Simulation already running")
 
@@ -260,6 +268,8 @@ async def launch_simulation(body: LaunchRequest):
     current_mission_id = mission_id
     _telemetry_tick_counter = 0
     _last_rms_error = 0.0
+    _hit_target_positions = set()
+    _pending_reassignments = []
 
     # Snapshot weapon initial positions before sim starts moving them
     _weapon_launch_snapshots = {}
@@ -341,9 +351,11 @@ def simulation_status():
 
 async def _simulation_loop():
     global sim_running
-    wall_tick_s = TICK_INTERVAL_MS / 1000.0 / sim_speed_multiplier
 
     while sim_running:
+        # Re-read multiplier every tick so mid-sim speed changes take effect immediately
+        wall_tick_s = TICK_INTERVAL_MS / 1000.0 / sim_speed_multiplier
+
         until_ms = event_queue.sim_time_ms + TICK_INTERVAL_MS
         events = event_queue.pop_until(until_ms)
 
@@ -374,12 +386,92 @@ async def _simulation_loop():
         )
 
 
+def _reassign_to_next_target(weapon_id: str, hit_lat: float, hit_lon: float) -> None:
+    """
+    Queue this weapon for reassignment on the NEXT tick.
+    This lets the IMPACTED state broadcast go out to clients first (so the
+    impact animation plays), before the state is reset to CRUISE.
+    Also records the hit position so the weapon never returns to a destroyed target.
+    """
+    _hit_target_positions.add((round(hit_lat, 3), round(hit_lon, 3)))
+    _pending_reassignments.append((weapon_id, hit_lat, hit_lon))
+
+
+def _process_pending_reassignments() -> None:
+    """
+    Called at the START of each physics tick to apply queued retargets.
+    By the time this runs, the previous tick's IMPACTED broadcasts have been sent.
+    """
+    import math
+    if not _pending_reassignments:
+        return
+
+    to_process = list(_pending_reassignments)
+    _pending_reassignments.clear()
+
+    targets = graph.all_entities(EntityType.TARGET)
+    if not targets:
+        return
+
+    for weapon_id, hit_lat, hit_lon in to_process:
+        # Collect positions occupied by OTHER active weapons
+        occupied: set[tuple[float, float]] = set()
+        for w in graph.all_entities(EntityType.WEAPON):
+            if w.id == weapon_id:
+                continue
+            if w.properties.get("suda_state") in ("DESTROYED", "IMPACTED"):
+                continue
+            tlat = w.properties.get("target_lat")
+            tlon = w.properties.get("target_lon")
+            if tlat is not None and tlon is not None:
+                occupied.add((round(float(tlat), 3), round(float(tlon), 3)))
+
+        def _is_destroyed(t) -> bool:
+            pos = (round(float(t.properties.get("lat", 0)), 3),
+                   round(float(t.properties.get("lon", 0)), 3))
+            return pos in _hit_target_positions
+
+        # Prefer: not yet destroyed AND not occupied by another weapon
+        candidates = [t for t in targets if not _is_destroyed(t)
+                      and (round(float(t.properties.get("lat", 0)), 3),
+                           round(float(t.properties.get("lon", 0)), 3)) not in occupied]
+        # Fallback: any not-yet-destroyed target
+        if not candidates:
+            candidates = [t for t in targets if not _is_destroyed(t)]
+        if not candidates:
+            return  # All targets destroyed — mission complete
+
+        cur = graph.get_entity(weapon_id)
+        wlat = float(cur.properties.get("lat", hit_lat)) if cur else hit_lat
+        wlon = float(cur.properties.get("lon", hit_lon)) if cur else hit_lon
+
+        def _dist(t) -> float:
+            R = 6371.0
+            lat1, lon1 = math.radians(wlat), math.radians(wlon)
+            lat2 = math.radians(float(t.properties.get("lat", 0)))
+            lon2 = math.radians(float(t.properties.get("lon", 0)))
+            dlat, dlon = lat2 - lat1, lon2 - lon1
+            a = (math.sin(dlat / 2) ** 2
+                 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2)
+            return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+        next_t = min(candidates, key=_dist)
+        graph.update_entity(weapon_id, {
+            "suda_state": "CRUISE",
+            "target_lat": float(next_t.properties.get("lat", 0)),
+            "target_lon": float(next_t.properties.get("lon", 0)),
+            "tau_i": 0.0,
+        })
+
+
 async def _run_physics_tick():
     """
     Physics tick: update all weapon positions via Rust engine,
     then run SUDA loop.
     """
     global _last_rms_error, _telemetry_tick_counter
+    # Apply any retargets queued from the previous tick's IMPACTED transitions
+    _process_pending_reassignments()
     sim_time_ms = event_queue.sim_time_ms
     weapons = graph.all_entities(EntityType.WEAPON)
 
@@ -387,10 +479,12 @@ async def _run_physics_tick():
     try:
         import ghost_engine  # type: ignore
         weapon_dicts = []
+        active_weapons = []   # parallel list to weapon_dicts — keeps id mapping correct
         for w in weapons:
             p = w.properties
             if p.get("suda_state") in ("DESTROYED", "IMPACTED"):
                 continue
+            active_weapons.append(w)
             weapon_dicts.append({
                 "id": int(w.id.replace("-", ""), 16) & 0xFFFFFFFFFFFFFFFF,
                 "lat": p.get("lat", 0.0),
@@ -415,23 +509,27 @@ async def _run_physics_tick():
 
         dt_s = TICK_INTERVAL_MS / 1000.0
         updated = ghost_engine.tick_weapons(weapon_dicts, dt_s)
-        # Write back physics results to entity graph
-        for i, w in enumerate(weapons):
-            if i < len(updated):
-                upd = updated[i]
-                graph.update_entity(w.id, {
-                    "lat": upd["lat"],
-                    "lon": upd["lon"],
-                    "alt_km": upd["alt_km"],
-                    "heading_deg": upd["heading_deg"],
-                    "fuel_pct": upd["fuel_pct"],
-                    "tau_i": upd["tau_i"],
-                    "suda_state": ["CRUISE", "EVADING", "REALIGNING", "TERMINAL", "DESTROYED", "IMPACTED"][upd["suda_state"]],
-                })
-                spatial.upsert(w.id, upd["lat"], upd["lon"], upd["alt_km"])
+        # Write back using active_weapons (correctly aligned with weapon_dicts/updated)
+        for i, w in enumerate(active_weapons):
+            if i >= len(updated):
+                break
+            upd = updated[i]
+            new_state = ["CRUISE", "EVADING", "REALIGNING", "TERMINAL", "DESTROYED", "IMPACTED"][upd["suda_state"]]
+            graph.update_entity(w.id, {
+                "lat": upd["lat"],
+                "lon": upd["lon"],
+                "alt_km": upd["alt_km"],
+                "heading_deg": upd["heading_deg"],
+                "fuel_pct": upd["fuel_pct"],
+                "tau_i": upd["tau_i"],
+                "suda_state": new_state,
+            })
+            spatial.upsert(w.id, upd["lat"], upd["lon"], upd["alt_km"])
 
-                if upd["suda_state"] == 4:  # DESTROYED
-                    suda_engine.handle_weapon_destroyed(w.id, sim_time_ms)
+            if upd["suda_state"] == 4:  # DESTROYED
+                suda_engine.handle_weapon_destroyed(w.id, sim_time_ms)
+            elif upd["suda_state"] == 5:  # IMPACTED — try sequential retarget
+                _reassign_to_next_target(w.id, upd["lat"], upd["lon"])
 
         # ToT consensus tick — distributed convergence (Rust TotEngine)
         alive_weapons = [w for w in weapons if w.properties.get("suda_state") not in ("DESTROYED", "IMPACTED")]
@@ -518,6 +616,7 @@ def _python_physics_fallback(weapons, dt_s: float):
         dist_km = _haversine_py(lat, lon, tlat, tlon)
         if dist_km < speed_kmps * dt_s:
             graph.update_entity(w.id, {"suda_state": "IMPACTED", "lat": tlat, "lon": tlon})
+            _reassign_to_next_target(w.id, tlat, tlon)
             continue
         bearing_rad = _bearing_py(lat, lon, tlat, tlon)
         d = speed_kmps * dt_s

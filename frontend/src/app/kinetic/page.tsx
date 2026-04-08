@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode, type CSSProperties } from "react";
 import { useEntityWebSocket } from "@/hooks/useWebSocket";
 import { useEntityGraph } from "@/stores/entityGraph";
 import EngagementLog from "@/components/panels/EngagementLog";
@@ -14,11 +14,32 @@ import PlannerChat from "@/components/panels/PlannerChat";
 const CesiumGlobe = dynamic(() => import("@/components/map/CesiumGlobe"), {
   ssr: false,
   loading: () => (
-    <div className="w-full h-full flex items-center justify-center bg-[#050a12] text-gray-600 font-mono text-sm tracking-widest">
-      INITIALIZING GLOBE…
+    <div className="w-full h-full flex items-center justify-center font-mono text-[11px] tracking-[0.28em]"
+      style={{ background: "var(--app-bg)", color: "var(--t3)" }}>
+      INITIALIZING GLOBE
     </div>
   ),
 });
+
+// ── Shared glass panel style ──────────────────────────────────────────────────
+// Defined once, applied to all floating panels — ensures visual consistency.
+const GP: CSSProperties = {
+  background:              "rgba(10, 20, 42, 0.78)",
+  backdropFilter:          "blur(28px) saturate(180%)",
+  WebkitBackdropFilter:    "blur(28px) saturate(180%)",
+  border:                  "1px solid rgba(255, 255, 255, 0.08)",
+  borderRadius:            "10px",
+  boxShadow:
+    "0 12px 52px rgba(0,0,0,0.60), 0 3px 14px rgba(0,0,0,0.40), " +
+    "inset 0 1px 0 rgba(255,255,255,0.11), inset 0 -1px 0 rgba(0,0,0,0.20)",
+};
+
+// Slightly lighter surface for nested card items inside panels
+const GPC: CSSProperties = {
+  background:   "rgba(18, 32, 58, 0.70)",
+  border:       "1px solid rgba(255, 255, 255, 0.06)",
+  borderRadius: "6px",
+};
 
 type Mode = "planning" | "live";
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -92,25 +113,18 @@ export default function KineticPage() {
   const [pinnedTargetCoords, setPinnedTargetCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [hoveredTargetId, setHoveredTargetId] = useState<string | null>(null);
   const [simSpeed, setSimSpeed] = useState(1);
-  const { simRunning, wsConnected, simTimeS, setSimRunning } = useEntityGraph();
+  const { simRunning, wsConnected, simTimeS, setSimRunning, impactFlashes, clearImpactFlash } = useEntityGraph();
 
-  // Sync sim status from backend on mount (handles page refresh mid-sim)
   useEffect(() => {
     fetch(`${API}/simulation/status`)
       .then((r) => r.json())
-      .then((d) => {
-        if (d.running) { setSimRunning(true); setMode("live"); }
-      })
+      .then((d) => { if (d.running) { setSimRunning(true); setMode("live"); } })
       .catch(() => null);
   }, []);
 
-  // ESC cancels pending weapon placement or pin mode
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setPendingWeapon(null);
-        setPinModeActive(false);
-      }
+      if (e.key === "Escape") { setPendingWeapon(null); setPinModeActive(false); }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -122,18 +136,12 @@ export default function KineticPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sim_speed: 1.0, duration_s: 7200 }),
     });
-    // 400 = already running — treat as success
-    if (res.ok || res.status === 400) {
-      setSimRunning(true);
-      setMode("live");
-    }
+    if (res.ok || res.status === 400) { setSimRunning(true); setMode("live"); }
   };
 
   const handleStop = async () => {
     await fetch(`${API}/simulation/stop`, { method: "POST" });
-    setSimRunning(false);
-    setSimSpeed(1);
-    setMode("planning");
+    setSimRunning(false); setSimSpeed(1); setMode("planning");
   };
 
   const handleSetSpeed = async (speed: number) => {
@@ -152,50 +160,95 @@ export default function KineticPage() {
     return `T+${h > 0 ? `${h}h` : ""}${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
   };
 
-  // Mutually exclusive drawers
   const openAssets  = () => { setShowAssetsPanel((v) => !v); setShowPlanner(false); };
   const openPlanner = () => { setShowPlanner((v) => !v); setShowAssetsPanel(false); };
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[#050a12] overflow-hidden select-none">
+    <div className="h-screen w-screen flex flex-col overflow-hidden select-none"
+      style={{ background: "var(--app-bg)" }}>
 
-      {/* ── TOP BAR ───────────────────────────────────────────────── */}
-      <header className="flex items-center h-10 px-3 bg-[#080e1a] border-b border-[#1a2a40] z-20 shrink-0 gap-3">
-        <span className="text-cyan-400 font-mono font-bold tracking-[0.2em] text-sm">
-          GHOST-LINK C2
-        </span>
+      {/* ── GLASS TOP BAR ────────────────────────────────────────────────────── */}
+      <header className="gbar flex items-center h-12 px-5 z-30 shrink-0 gap-5">
 
-        <span className={`text-xs px-1.5 py-0.5 rounded font-mono border ${
-          wsConnected
-            ? "border-green-700 bg-green-950 text-green-400"
-            : "border-red-700 bg-red-950 text-red-400"
-        }`}>
-          {wsConnected ? "● ONLINE" : "● OFFLINE"}
-        </span>
+        {/* Wordmark */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex flex-col justify-center">
+            <span className="font-mono text-[12px] font-semibold tracking-[0.28em]"
+              style={{ color: "var(--t1)", lineHeight: 1 }}>
+              GHOST‑LINK
+            </span>
+            <span className="font-mono text-[8px] tracking-[0.16em] mt-0.5"
+              style={{ color: "var(--t3)", lineHeight: 1 }}>
+              COMMAND &amp; CONTROL
+            </span>
+          </div>
+          <div className="w-px h-6 mx-1" style={{ background: "rgba(255,255,255,0.08)" }} />
+          <div className="flex items-center gap-1.5">
+            <div
+              className={`w-1.5 h-1.5 rounded-full ${!wsConnected ? "offline-blink" : ""}`}
+              style={{ background: wsConnected ? "var(--ac-green)" : "var(--ac-red)" }}
+            />
+            <span className="font-mono text-[9px] tracking-[0.14em]"
+              style={{ color: wsConnected ? "var(--ac-green)" : "var(--ac-red)" }}>
+              {wsConnected ? "ONLINE" : "OFFLINE"}
+            </span>
+          </div>
+        </div>
 
         {simRunning && (
-          <span className="text-cyan-600 font-mono text-xs tracking-wider">
-            {formatSimTime(simTimeS)}
-          </span>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded"
+            style={{ background: "rgba(20,200,232,0.08)", border: "1px solid rgba(20,200,232,0.18)" }}>
+            <div className="w-1 h-1 rounded-full" style={{ background: "var(--ac-cyan)", animation: "offlineBlink 1.4s ease-in-out infinite" }} />
+            <span className="font-mono text-[10px] tracking-[0.12em] tabular-nums"
+              style={{ color: "var(--ac-cyan)" }}>
+              {formatSimTime(simTimeS)}
+            </span>
+          </div>
         )}
 
-        <Link href="/missions" className="text-xs font-mono text-gray-500 hover:text-cyan-400 px-2 py-0.5 rounded hover:bg-[#0f1f35] transition-colors">
-          MISSIONS
-        </Link>
-        <Link href="/map" className="text-xs font-mono text-gray-500 hover:text-cyan-400 px-2 py-0.5 rounded hover:bg-[#0f1f35] transition-colors">
-          MAP
-        </Link>
+        {/* Nav links */}
+        <div className="flex items-center gap-1">
+          {[
+            { href: "/missions", label: "MISSIONS" },
+            { href: "/map",      label: "MAP" },
+          ].map(({ href, label }) => (
+            <Link key={href} href={href}
+              className="font-mono text-[9px] tracking-[0.16em] px-2.5 py-1 rounded transition-all duration-150"
+              style={{ color: "var(--t3)" }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--t2)"; (e.currentTarget as HTMLAnchorElement).style.background = "rgba(255,255,255,0.04)"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--t3)"; (e.currentTarget as HTMLAnchorElement).style.background = "transparent"; }}>
+              {label}
+            </Link>
+          ))}
+        </div>
 
-        {/* Mode toggle — centered */}
+        {/* Mode toggle — center */}
         <div className="flex-1 flex justify-center">
-          <div className="flex items-center bg-[#0a1628] border border-[#1a2a40] rounded overflow-hidden">
-            {(["planning", "live"] as Mode[]).map((m) => (
+          <div className="flex items-center rounded-md overflow-hidden"
+            style={{
+              background: "rgba(4, 10, 22, 0.80)",
+              border: "1px solid rgba(255,255,255,0.07)",
+              boxShadow: "inset 0 1px 0 rgba(0,0,0,0.3)",
+            }}>
+            {(["planning", "live"] as Mode[]).map((m, i) => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
-                className={`px-5 py-1 text-xs font-mono uppercase tracking-widest transition-colors ${
-                  mode === m ? "bg-cyan-700 text-white" : "text-gray-500 hover:text-gray-200"
-                }`}
+                className="px-6 py-1.5 font-mono text-[10px] uppercase tracking-[0.2em] transition-all duration-200"
+                style={
+                  mode === m
+                    ? {
+                        background: "rgba(74,154,255,0.16)",
+                        color: "#7ab8ff",
+                        borderRight: i === 0 ? "1px solid rgba(255,255,255,0.08)" : undefined,
+                        boxShadow: "inset 0 1px 0 rgba(74,154,255,0.20), inset 0 -1px 0 rgba(74,154,255,0.10)",
+                        fontWeight: 500,
+                      }
+                    : {
+                        color: "var(--t3)",
+                        borderRight: i === 0 ? "1px solid rgba(255,255,255,0.05)" : undefined,
+                      }
+                }
               >
                 {m}
               </button>
@@ -207,96 +260,150 @@ export default function KineticPage() {
         <div className="flex items-center gap-2">
           {mode === "planning" && (
             <>
-              <button
-                onClick={openAssets}
-                className={`px-3 py-1 text-xs font-mono rounded border transition-colors ${
-                  showAssetsPanel
-                    ? "border-green-500 bg-green-900 text-green-200"
-                    : "border-green-800 bg-green-950 text-green-400 hover:border-green-600"
-                }`}
-              >
-                ADD ASSETS
-              </button>
-              <button
-                onClick={openPlanner}
-                className={`px-3 py-1 text-xs font-mono rounded border transition-colors ${
-                  showPlanner
-                    ? "border-indigo-500 bg-indigo-900 text-indigo-200"
-                    : "border-indigo-800 bg-indigo-950 text-indigo-400 hover:border-indigo-600"
-                }`}
-              >
+              <GhostButton active={showAssetsPanel} onClick={openAssets}>
+                ASSETS
+              </GhostButton>
+              <GhostButton active={showPlanner} onClick={openPlanner}>
                 AI PLANNER
-              </button>
+              </GhostButton>
             </>
           )}
 
           {!simRunning ? (
             <button
               onClick={handleLaunch}
-              className="px-4 py-1 text-xs font-mono bg-red-700 hover:bg-red-600 border border-red-500 rounded text-white font-bold tracking-widest transition-colors"
+              className="launch-pulse px-5 py-1.5 font-mono text-[10px] rounded tracking-[0.2em] font-semibold transition-all duration-150"
+              style={{
+                ...GP,
+                background: "rgba(216, 56, 56, 0.14)",
+                borderRadius: 6,
+                color: "#f07070",
+                border: "1px solid rgba(216,56,56,0.40)",
+                boxShadow: "0 2px 16px rgba(216,56,56,0.12), inset 0 1px 0 rgba(255,255,255,0.08)",
+                backdropFilter: "none",
+                WebkitBackdropFilter: "none",
+              }}
             >
               LAUNCH
             </button>
           ) : (
-            <div className="flex items-center gap-1">
-              {/* Speed multiplier buttons */}
-              <div className="flex items-center border border-[#1a2a40] rounded overflow-hidden">
-                {([1, 2, 5, 8] as const).map((s) => (
+            <div className="flex items-center gap-2">
+              <div className="flex items-center rounded overflow-hidden"
+                style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(4,10,22,0.7)" }}>
+                {([1, 2, 5, 8] as const).map((s, i) => (
                   <button
                     key={s}
                     onClick={() => handleSetSpeed(s)}
-                    className={`px-2 py-1 text-[10px] font-mono transition-colors ${
+                    className="px-2.5 py-1.5 font-mono text-[9px] transition-all duration-100"
+                    style={
                       simSpeed === s
-                        ? "bg-amber-700 text-amber-100 border-amber-500"
-                        : "bg-[#0a1628] text-gray-500 hover:text-amber-300"
-                    }`}
+                        ? {
+                            background: "rgba(208,136,32,0.18)",
+                            color: "var(--ac-amber)",
+                            borderRight: i < 3 ? "1px solid rgba(255,255,255,0.06)" : undefined,
+                          }
+                        : {
+                            color: "var(--t3)",
+                            borderRight: i < 3 ? "1px solid rgba(255,255,255,0.04)" : undefined,
+                          }
+                    }
                   >
                     {s}×
                   </button>
                 ))}
               </div>
-              <button
-                onClick={handleStop}
-                className="px-4 py-1 text-xs font-mono bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded text-gray-300 tracking-widest transition-colors"
-              >
-                STOP SIM
-              </button>
+              <GhostButton onClick={handleStop}>STOP</GhostButton>
             </div>
           )}
         </div>
       </header>
 
-      {/* ── MAIN AREA ─────────────────────────────────────────────── */}
-      <div className="flex flex-1 overflow-hidden">
+      {/* ── MAP AREA — globe is the full-height background ───────────────────── */}
+      <div className="flex-1 relative overflow-hidden">
 
-        {/* LEFT SIDEBAR — data panels */}
-        <aside className="w-44 shrink-0 flex flex-col gap-2 p-2 bg-[#080e1a] border-r border-[#1a2a40] overflow-y-auto z-10">
+        {/* Cesium — absolute, fills full area, z-0 */}
+        <div className="absolute inset-0" style={{ zIndex: 0 }}>
+          <CesiumGlobe
+            mode={mode}
+            onEntitySelect={setSelectedEntityId}
+            selectedEntityId={selectedEntityId}
+            pendingWeapon={pendingWeapon}
+            onWeaponPlaced={() => setPendingWeapon(null)}
+            planHighlights={planHighlights}
+            hoveredRouteWeapon={hoveredRouteWeapon}
+            viewAllPaths={viewAllPaths}
+            pinTargetMode={pinModeActive}
+            onTargetPinned={(lat, lon) => {
+              setPinnedTargetCoords({ lat, lon });
+              setPinModeActive(false);
+            }}
+            onTargetHover={setHoveredTargetId}
+          />
+        </div>
+
+        {/* ── LEFT TELEMETRY CLUSTER ── floating glass panel ── */}
+        <aside
+          className="panel-enter absolute overflow-y-auto"
+          style={{
+            ...GP,
+            top: 12, left: 12,
+            width: 230,
+            maxHeight: "calc(100% - 24px)",
+            zIndex: 10,
+          }}
+        >
           <TotConvergencePanel />
+          <div className="gp-div" />
           <SaturationMeter />
+          <div className="gp-div" />
           <EntityCountSummary />
         </aside>
 
-        {/* ADD ASSETS DRAWER */}
+        {/* ── ASSETS DRAWER ── floating glass panel ── */}
         {showAssetsPanel && mode === "planning" && (
-          <div className="w-80 shrink-0 flex flex-col bg-[#080e1a] border-r border-[#1a2a40] z-10 overflow-hidden">
+          <div
+            className="panel-enter absolute flex flex-col"
+            style={{
+              ...GP,
+              top: 12, left: 254,   /* 12 + 230 + 12 */
+              width: 316,
+              bottom: 12,
+              zIndex: 11,
+            }}
+          >
             <AssetsPanel
               onClose={() => setShowAssetsPanel(false)}
-              onSetPendingWeapon={(w) => {
-                setPendingWeapon(w);
-                setShowAssetsPanel(false);
-              }}
+              onSetPendingWeapon={(w) => { setPendingWeapon(w); setShowAssetsPanel(false); }}
             />
           </div>
         )}
 
-        {/* AI PLANNER DRAWER */}
+        {/* ── AI PLANNER DRAWER ── floating glass panel ── */}
         {showPlanner && mode === "planning" && (
-          <div className="w-80 shrink-0 flex flex-col bg-[#080e1a] border-r border-[#1a2a40] z-10 overflow-y-auto">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-[#1a2a40]">
-              <span className="text-indigo-400 font-mono text-xs tracking-widest">AI PLANNER</span>
-              <button onClick={() => setShowPlanner(false)} className="text-gray-600 hover:text-white text-sm leading-none">✕</button>
+          <div
+            className="panel-enter absolute flex flex-col"
+            style={{
+              ...GP,
+              top: 12, left: 254,
+              width: 316,
+              bottom: 12,
+              zIndex: 11,
+              overflow: "hidden",
+            }}
+          >
+            <div className="flex items-center justify-between px-4 py-3 shrink-0"
+              style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+              <span className="gl-label">AI Planner</span>
+              <button
+                onClick={() => setShowPlanner(false)}
+                className="font-mono text-[11px] leading-none transition-colors duration-150"
+                style={{ color: "var(--t3)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--t1)")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--t3)")}>
+                ✕
+              </button>
             </div>
-            <div className="flex-1">
+            <div className="flex-1 overflow-y-auto">
               <PlannerChat
                 onPlanResult={(p) =>
                   setPlanHighlights(
@@ -314,9 +421,7 @@ export default function KineticPage() {
                     } : null
                   )
                 }
-                onWeaponHover={(wt) => {
-                  if (!viewAllPaths) setHoveredRouteWeapon(wt);
-                }}
+                onWeaponHover={(wt) => { if (!viewAllPaths) setHoveredRouteWeapon(wt); }}
                 pinModeActive={pinModeActive}
                 onPinModeToggle={setPinModeActive}
                 pinnedCoords={pinnedTargetCoords}
@@ -325,125 +430,223 @@ export default function KineticPage() {
           </div>
         )}
 
-        {/* GLOBE — fills remaining space */}
-        <div className="flex-1 relative min-w-0 h-full">
-          <CesiumGlobe
-            mode={mode}
-            onEntitySelect={setSelectedEntityId}
-            selectedEntityId={selectedEntityId}
-            pendingWeapon={pendingWeapon}
-            onWeaponPlaced={() => setPendingWeapon(null)}
-            planHighlights={planHighlights}
-            hoveredRouteWeapon={hoveredRouteWeapon}
-            viewAllPaths={viewAllPaths}
-            pinTargetMode={pinModeActive}
-            onTargetPinned={(lat, lon) => {
-              setPinnedTargetCoords({ lat, lon });
-              setPinModeActive(false);
-            }}
-            onTargetHover={setHoveredTargetId}
-          />
-
-          {/* Top-right overlays */}
-          <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1.5">
-            <span className="text-xs font-mono text-gray-700 tracking-widest uppercase pointer-events-none">
-              {mode} MODE
-            </span>
-            {planHighlights && planHighlights.routes.length > 0 && (
-              <button
-                onClick={() => setViewAllPaths((v) => !v)}
-                className={`px-2 py-0.5 text-[10px] font-mono tracking-widest rounded border transition-colors ${
-                  viewAllPaths
-                    ? "border-amber-500 bg-amber-900/60 text-amber-300"
-                    : "border-green-800 bg-black/60 text-green-500 hover:border-green-600"
-                }`}
-              >
-                ALL PATHS
-              </button>
-            )}
-          </div>
-
-          {/* Pin target mode banner */}
-          {pinModeActive && !pendingWeapon && (
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20">
-              <div className="bg-cyan-950/95 border border-cyan-600 rounded-full px-5 py-2 font-mono text-xs text-cyan-300 flex items-center gap-3 shadow-lg">
-                <span className="text-cyan-400 text-base leading-none">📍</span>
-                <span>CLICK GLOBE TO PIN TARGET</span>
-                <button
-                  onClick={() => setPinModeActive(false)}
-                  className="text-gray-500 hover:text-red-400 ml-1 leading-none"
-                  title="Cancel (ESC)"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Target hover tooltip — shows assigned weapons + launch bases */}
-          {hoveredTargetId && planHighlights && (() => {
-            const routes = planHighlights.routes.filter((r) => r.target_id === hoveredTargetId);
-            if (routes.length === 0) return null;
-            const bases = planHighlights.airbases;
-            const carriers = planHighlights.carriers;
-            return (
-              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
-                <div className="bg-[#060c18]/95 border border-cyan-800 rounded px-3 py-2 font-mono text-[10px] shadow-lg min-w-[200px]">
-                  <div className="text-cyan-500 tracking-widest mb-1.5">INCOMING ASSETS</div>
-                  {routes.map((r, i) => {
-                    const ab = bases.find((b) => b.id === r.airbase_id);
-                    const carrier = carriers.find((c) => `carrier_${carriers.indexOf(c)}` === r.airbase_id);
-                    const baseName = ab?.name ?? carrier?.label ?? r.airbase_id;
-                    return (
-                      <div key={i} className="flex items-center gap-2 py-0.5 border-t border-[#1a2a40] first:border-0">
-                        <span className="text-blue-300 font-bold">{r.weapon_type.replace(/_/g, " ").toUpperCase()}</span>
-                        <span className="text-gray-600">←</span>
-                        <span className="text-gray-400 truncate">{baseName}</span>
-                        <span className="text-gray-600 ml-auto shrink-0">{Math.round(r.total_dist_km)} km</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Pending weapon placement banner */}
-          {pendingWeapon && (
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20">
-              <div className="bg-cyan-950/95 border border-cyan-600 rounded-full px-5 py-2 font-mono text-xs text-cyan-300 flex items-center gap-3 shadow-lg">
-                <span className="text-cyan-500 text-base leading-none">⊕</span>
-                <span>
-                  CLICK GLOBE TO DEPLOY{" "}
-                  <span className="text-white font-bold">{pendingWeapon.name}</span>
-                  <span className="text-gray-500 ml-2">· {pendingWeapon.domain}</span>
-                </span>
-                <button
-                  onClick={() => setPendingWeapon(null)}
-                  className="text-gray-500 hover:text-red-400 ml-1 leading-none"
-                  title="Cancel (ESC)"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* RIGHT PANEL — entity inspector */}
+        {/* ── RIGHT ENTITY INSPECTOR ── floating glass panel ── */}
         {selectedEntityId && (
-          <aside className="w-64 shrink-0 flex flex-col bg-[#080e1a] border-l border-[#1a2a40] overflow-y-auto z-10">
+          <div
+            className="panel-enter absolute overflow-y-auto"
+            style={{
+              ...GP,
+              top: 12, right: 12,
+              width: 252,
+              maxHeight: "calc(100% - 24px)",
+              zIndex: 10,
+            }}
+          >
             <EntityInspector
               entityId={selectedEntityId}
               onClose={() => setSelectedEntityId(null)}
             />
-          </aside>
+          </div>
         )}
+
+        {/* ── TOP-RIGHT HUD OVERLAYS ── */}
+        <div className="absolute top-3 right-3 z-20 flex flex-col items-end gap-2"
+          style={{ right: selectedEntityId ? "276px" : 12 }}>
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-md font-mono text-[9px] tracking-[0.2em]"
+            style={{
+              ...GP,
+              borderRadius: 6,
+              padding: "6px 12px",
+              color: mode === "live" ? "var(--ac-cyan)" : "var(--t3)",
+            }}>
+            <div className="w-1.5 h-1.5 rounded-full"
+              style={{ background: mode === "live" ? "var(--ac-cyan)" : "rgba(255,255,255,0.12)" }} />
+            {mode.toUpperCase()}
+          </div>
+          {planHighlights && planHighlights.routes.length > 0 && (
+            <button
+              onClick={() => setViewAllPaths((v) => !v)}
+              className="px-3 py-1.5 font-mono text-[9px] tracking-[0.16em] rounded-md transition-all duration-150"
+              style={{
+                ...GP,
+                borderRadius: 6,
+                color: viewAllPaths ? "var(--ac-amber)" : "var(--t2)",
+                border: viewAllPaths ? "1px solid rgba(208,136,32,0.35)" : "1px solid rgba(255,255,255,0.08)",
+              }}>
+              ALL PATHS
+            </button>
+          )}
+        </div>
+
+        {/* ── PIN MODE BANNER ── */}
+        {pinModeActive && !pendingWeapon && (
+          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-20">
+            <div className="flex items-center gap-3 px-6 py-2.5 rounded-full font-mono text-[10px] tracking-[0.14em]"
+              style={{ ...GP, borderRadius: 999, color: "var(--ac-cyan)" }}>
+              <span>◎</span>
+              <span>CLICK GLOBE TO PIN TARGET</span>
+              <button onClick={() => setPinModeActive(false)}
+                className="ml-1 leading-none transition-colors duration-150"
+                style={{ color: "var(--t3)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--t1)")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--t3)")}>
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── TARGET HOVER TOOLTIP ── */}
+        {hoveredTargetId && planHighlights && (() => {
+          const routes = planHighlights.routes.filter((r) => r.target_id === hoveredTargetId);
+          if (routes.length === 0) return null;
+          const bases = planHighlights.airbases;
+          const carriers = planHighlights.carriers;
+          return (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+              <div className="rounded-lg px-4 py-3 font-mono text-[10px] min-w-[240px]"
+                style={{ ...GP }}>
+                <div className="gl-label mb-2.5">Assigned Assets</div>
+                {routes.map((r, i) => {
+                  const ab = bases.find((b) => b.id === r.airbase_id);
+                  const carrier = carriers.find((c) => `carrier_${carriers.indexOf(c)}` === r.airbase_id);
+                  const baseName = ab?.name ?? carrier?.label ?? r.airbase_id;
+                  return (
+                    <div key={i} className="flex items-center gap-2 py-1.5"
+                      style={{ borderTop: i > 0 ? "1px solid rgba(255,255,255,0.05)" : undefined }}>
+                      <span className="font-medium shrink-0 text-[9px] uppercase tracking-wider"
+                        style={{ color: "var(--ac-blue)" }}>
+                        {r.weapon_type.replace(/_/g, " ")}
+                      </span>
+                      <span style={{ color: "var(--t3)" }}>←</span>
+                      <span className="truncate text-[9px]" style={{ color: "var(--t2)" }}>{baseName}</span>
+                      <span className="ml-auto shrink-0 text-[9px] tabular-nums" style={{ color: "var(--t3)" }}>
+                        {Math.round(r.total_dist_km)} km
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── WEAPON DEPLOY BANNER ── */}
+        {pendingWeapon && (
+          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-20">
+            <div className="flex items-center gap-3 px-6 py-2.5 rounded-full font-mono text-[10px] tracking-[0.12em]"
+              style={{ ...GP, borderRadius: 999, color: "var(--t1)" }}>
+              <span style={{ color: "var(--ac-cyan)" }}>⊕</span>
+              <span>
+                DEPLOY{" "}
+                <span className="font-semibold">{pendingWeapon.name}</span>
+                <span className="ml-2 text-[9px]" style={{ color: "var(--t3)" }}>
+                  · {pendingWeapon.domain}
+                </span>
+              </span>
+              <button onClick={() => setPendingWeapon(null)}
+                className="ml-1 leading-none transition-colors duration-150"
+                style={{ color: "var(--t3)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--t1)")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--t3)")}>
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Globe framing vignette — draws the eye inward, makes globe feel intentional */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            zIndex: 1,
+            background:
+              "radial-gradient(ellipse 85% 85% at 50% 48%, transparent 55%, rgba(1,10,20,0.55) 100%)",
+          }}
+        />
+
+        {/* ── IMPACT FLASHES ── */}
+        {impactFlashes.map((flash) => (
+          <ImpactFlash key={flash.id} flash={flash} onDone={() => clearImpactFlash(flash.id)} />
+        ))}
       </div>
 
-      {/* ── BOTTOM BAR — engagement log ───────────────────────────── */}
-      <div className="h-28 shrink-0 border-t border-[#1a2a40]">
+      {/* ── BOTTOM — glass engagement log bar ────────────────────────────────── */}
+      <div className="gbar-top shrink-0" style={{ height: 148 }}>
         <EngagementLog />
+      </div>
+    </div>
+  );
+}
+
+// ── GhostButton — reusable header control ────────────────────────────────────
+
+function GhostButton({
+  onClick,
+  active = false,
+  children,
+}: {
+  onClick: () => void;
+  active?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="px-3 py-1.5 font-mono text-[9px] rounded tracking-[0.16em] transition-all duration-150"
+      style={
+        active
+          ? {
+              background: "rgba(74,154,255,0.14)",
+              color: "var(--ac-blue)",
+              border: "1px solid rgba(74,154,255,0.30)",
+              boxShadow: "inset 0 1px 0 rgba(74,154,255,0.10)",
+            }
+          : {
+              background: "rgba(255,255,255,0.04)",
+              color: "var(--t2)",
+              border: "1px solid rgba(255,255,255,0.08)",
+            }
+      }
+      onMouseEnter={(e) => {
+        if (!active) {
+          (e.currentTarget as HTMLButtonElement).style.color = "var(--t1)";
+          (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.07)";
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!active) {
+          (e.currentTarget as HTMLButtonElement).style.color = "var(--t2)";
+          (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.04)";
+        }
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ── ImpactFlash ───────────────────────────────────────────────────────────────
+
+function ImpactFlash({ flash, onDone }: { flash: { id: string; weaponLabel: string }; onDone: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onDone, 5000);
+    return () => clearTimeout(t);
+  }, []);
+
+  return (
+    <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">
+      <div className="absolute inset-0 animate-pulse" style={{ background: "rgba(216,56,56,0.06)" }} />
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/impact.gif"
+        alt="impact"
+        className="w-64 h-auto"
+        style={{ filter: "drop-shadow(0 0 36px rgba(216,56,56,0.70))" }}
+      />
+      <div className="absolute bottom-16 font-mono text-[10px] tracking-[0.3em] animate-pulse"
+        style={{ color: "var(--ac-red)" }}>
+        TARGET DESTROYED · {flash.weaponLabel.replace(/_/g, " ").toUpperCase()}
       </div>
     </div>
   );
@@ -457,12 +660,11 @@ function EntityCountSummary() {
   const targets = getTargets();
   const threats = getThreats();
 
-  const handleDeleteAsset = (id: string) => {
+  const handleDelete = (id: string) => {
     removeEntity(id);
     fetch(`${API}/entities/${id}`, { method: "DELETE" }).catch(() => null);
   };
 
-  // Group weapons by type, tracking alive vs destroyed per type
   const byType = weapons.reduce<Record<string, { alive: number; total: number }>>((acc, w) => {
     const raw = (w.properties.weapon_type as string) ?? "UNKNOWN";
     const key = raw.replace(/_/g, " ").toUpperCase();
@@ -476,83 +678,94 @@ function EntityCountSummary() {
   const typeEntries = Object.entries(byType);
 
   return (
-    <div className="bg-[#0a1628] border border-[#1a2a40] rounded p-2 text-xs font-mono">
-      <div className="text-gray-600 text-[9px] mb-1.5 tracking-widest">ASSETS</div>
-      <div className="flex flex-col gap-0.5">
-
-        {/* Weapons — per type summary */}
-        {typeEntries.length === 0 ? (
-          <div className="flex justify-between">
-            <span className="text-gray-500">Weapons</span>
-            <span className="text-gray-700">0</span>
-          </div>
-        ) : (
-          typeEntries.map(([type, { alive, total }]) => (
-            <div key={type} className="flex justify-between items-center gap-1">
-              <span className="text-gray-500 truncate text-[10px]" title={type}>{type}</span>
-              <span className={`shrink-0 text-[10px] ${alive < total ? "text-yellow-400" : "text-blue-400"}`}>
+    <div className="px-4 py-3">
+      {/* Weapons type summary */}
+      <div className="gl-label mb-2">Assets</div>
+      {typeEntries.length === 0 ? (
+        <div className="font-mono text-[9px]" style={{ color: "var(--t4)" }}>No weapons placed</div>
+      ) : (
+        <div className="space-y-1 mb-3">
+          {typeEntries.map(([type, { alive, total }]) => (
+            <div key={type} className="flex items-center justify-between">
+              <span className="font-mono text-[10px] truncate max-w-[120px]" style={{ color: "var(--t2)" }} title={type}>
+                {type}
+              </span>
+              <span className="font-mono text-[10px] tabular-nums shrink-0 ml-2"
+                style={{ color: alive < total ? "var(--ac-amber)" : "var(--ac-blue)" }}>
                 {alive}/{total}
               </span>
             </div>
-          ))
-        )}
+          ))}
+        </div>
+      )}
 
-        {/* Individual weapon rows with delete */}
-        {weapons.length > 0 && (
-          <div className="mt-1 border-t border-[#1a2a40] pt-1 space-y-0.5">
-            {weapons.map((w) => {
-              const label = (w.properties.label as string) || (w.properties.weapon_type as string) || "Weapon";
-              const state = (w.properties.suda_state as string) ?? "CRUISE";
-              const dead = state === "DESTROYED" || state === "IMPACTED";
-              return (
-                <div key={w.id} className="flex items-center justify-between group">
-                  <span className={`truncate text-[9px] max-w-[100px] ${dead ? "text-gray-600 line-through" : "text-gray-400"}`} title={label}>
-                    {label}
-                  </span>
-                  <button
-                    onClick={() => handleDeleteAsset(w.id)}
-                    className="text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity leading-none text-[10px] shrink-0 ml-1"
-                    title="Remove asset"
-                  >
-                    ✕
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
+      {/* Individual weapon rows */}
+      {weapons.length > 0 && (
+        <div className="space-y-px mb-3 pt-2.5" style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+          {weapons.map((w) => {
+            const label = (w.properties.label as string) || (w.properties.weapon_type as string) || "Weapon";
+            const state = (w.properties.suda_state as string) ?? "CRUISE";
+            const dead = state === "DESTROYED" || state === "IMPACTED";
+            return (
+              <div key={w.id} className="flex items-center justify-between group py-0.5">
+                <span
+                  className="font-mono text-[9px] truncate max-w-[140px]"
+                  style={{ color: dead ? "var(--t4)" : "var(--t2)", textDecoration: dead ? "line-through" : undefined }}
+                  title={label}>
+                  {label}
+                </span>
+                <button
+                  onClick={() => handleDelete(w.id)}
+                  className="font-mono text-[9px] leading-none opacity-0 group-hover:opacity-100 transition-opacity duration-150 ml-1 shrink-0"
+                  style={{ color: "var(--t3)" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--ac-red)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--t3)")}
+                  title="Remove">
+                  ✕
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
-        <div className="border-t border-[#1a2a40] my-0.5" />
-
-        {/* Targets with delete */}
-        <div className="text-gray-600 text-[9px] tracking-widest mb-0.5">TARGETS</div>
-        {targets.length === 0 ? (
-          <div className="flex justify-between">
-            <span className="text-gray-500">Targets</span>
-            <span className="text-gray-700">0</span>
-          </div>
-        ) : (
-          targets.map((t) => (
-            <div key={t.id} className="flex items-center justify-between group">
-              <span className="truncate text-[9px] text-red-300 max-w-[100px]" title={(t.properties.label as string) || "Target"}>
+      {/* Targets */}
+      <div className="gl-label mb-2 pt-2.5" style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+        Targets
+      </div>
+      {targets.length === 0 ? (
+        <div className="font-mono text-[9px] mb-3" style={{ color: "var(--t4)" }}>None placed</div>
+      ) : (
+        <div className="space-y-px mb-3">
+          {targets.map((t) => (
+            <div key={t.id} className="flex items-center justify-between group py-0.5">
+              <span className="font-mono text-[9px] truncate max-w-[140px]"
+                style={{ color: "rgba(216,80,80,0.85)" }}
+                title={(t.properties.label as string) || "Target"}>
                 {(t.properties.label as string) || "Target"}
               </span>
               <button
-                onClick={() => handleDeleteAsset(t.id)}
-                className="text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity leading-none text-[10px] shrink-0 ml-1"
-                title="Remove target"
-              >
+                onClick={() => handleDelete(t.id)}
+                className="font-mono text-[9px] leading-none opacity-0 group-hover:opacity-100 transition-opacity duration-150 ml-1 shrink-0"
+                style={{ color: "var(--t3)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--ac-red)")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--t3)")}
+                title="Remove">
                 ✕
               </button>
             </div>
-          ))
-        )}
-
-        <div className="border-t border-[#1a2a40] my-0.5" />
-        <div className="flex justify-between">
-          <span className="text-gray-500">Threats</span>
-          <span className="text-orange-400">{threats.length}</span>
+          ))}
         </div>
+      )}
+
+      {/* Threats */}
+      <div className="flex items-center justify-between pt-2.5"
+        style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+        <span className="gl-label">Threats</span>
+        <span className="font-mono text-[10px] tabular-nums"
+          style={{ color: threats.length > 0 ? "var(--ac-amber)" : "var(--t4)" }}>
+          {threats.length}
+        </span>
       </div>
     </div>
   );
@@ -579,11 +792,7 @@ function AssetsPanel({
   useEffect(() => {
     fetch(`${API}/weapons/catalog`)
       .then((r) => r.json())
-      .then((data) => {
-        setCatalog(data.weapons ?? []);
-        setPlatforms(data.platforms ?? []);
-        setLoading(false);
-      })
+      .then((data) => { setCatalog(data.weapons ?? []); setPlatforms(data.platforms ?? []); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
 
@@ -599,8 +808,7 @@ function AssetsPanel({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        type: "TARGET",
-        domain: "LAND",
+        type: "TARGET", domain: "LAND",
         properties: { lat, lon, alt_km: 0, label: targetForm.label || `Target ${Date.now()}` },
       }),
     });
@@ -611,23 +819,31 @@ function AssetsPanel({
   return (
     <div className="flex flex-col h-full overflow-hidden">
 
-      {/* Panel header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[#1a2a40] shrink-0">
-        <span className="text-green-400 font-mono text-xs tracking-widest">ADD ASSETS</span>
-        <button onClick={onClose} className="text-gray-600 hover:text-white text-sm leading-none">✕</button>
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 shrink-0"
+        style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+        <span className="gl-label">Add Assets</span>
+        <button onClick={onClose}
+          className="font-mono text-[11px] leading-none transition-colors duration-150"
+          style={{ color: "var(--t3)" }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = "var(--t1)")}
+          onMouseLeave={(e) => (e.currentTarget.style.color = "var(--t3)")}>
+          ✕
+        </button>
       </div>
 
       {/* WEAPONS / TARGETS tabs */}
-      <div className="flex border-b border-[#1a2a40] shrink-0">
+      <div className="flex shrink-0" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
         {(["WEAPONS", "TARGETS"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex-1 py-1.5 text-xs font-mono tracking-widest transition-colors ${
+            className="flex-1 py-2.5 font-mono text-[9px] tracking-[0.18em] transition-all duration-150"
+            style={
               tab === t
-                ? "bg-[#0f1f35] text-cyan-400 border-b-2 border-cyan-600"
-                : "text-gray-600 hover:text-gray-300"
-            }`}
+                ? { color: "var(--t1)", borderBottom: "2px solid rgba(74,154,255,0.70)" }
+                : { color: "var(--t3)", borderBottom: "2px solid transparent" }
+            }
           >
             {t}
           </button>
@@ -638,59 +854,51 @@ function AssetsPanel({
       {tab === "WEAPONS" && (
         <div className="flex flex-col flex-1 overflow-hidden">
 
-          {/* Domain sub-tabs: AIR / SEA / LAND */}
-          <div className="flex shrink-0 border-b border-[#1a2a40]">
+          {/* Domain sub-tabs */}
+          <div className="flex shrink-0" style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
             {([
-              { key: "AIR",  icon: "✈",  active: "text-blue-400 border-blue-500 bg-blue-950/20" },
-              { key: "SEA",  icon: "⚓",  active: "text-cyan-400 border-cyan-500 bg-cyan-950/20" },
-              { key: "LAND", icon: "⬡",  active: "text-green-400 border-green-500 bg-green-950/20" },
-            ] as const).map(({ key, icon, active }) => (
+              { key: "AIR",  label: "AIR",  color: "var(--ac-blue)" },
+              { key: "SEA",  label: "SEA",  color: "var(--ac-cyan)" },
+              { key: "LAND", label: "LAND", color: "var(--ac-green)" },
+            ] as const).map(({ key, label, color }) => (
               <button
                 key={key}
                 onClick={() => { setDomain(key); setSelectedWeapon(null); }}
-                className={`flex-1 py-1.5 text-xs font-mono tracking-wider transition-colors border-b-2 ${
-                  domain === key ? `${active} border-b-2` : "text-gray-600 hover:text-gray-400 border-transparent"
-                }`}
+                className="flex-1 py-1.5 font-mono text-[9px] tracking-[0.16em] transition-all duration-150"
+                style={
+                  domain === key
+                    ? { color, borderBottom: `2px solid ${color}` }
+                    : { color: "var(--t4)", borderBottom: "2px solid transparent" }
+                }
               >
-                {icon} {key}
+                {label}
               </button>
             ))}
           </div>
 
-          {/* Domain description */}
-          <div className="px-3 py-1.5 shrink-0 border-b border-[#0f1828]">
-            <span className="text-gray-700 font-mono text-[10px] tracking-wide">
-              {domain === "AIR"  && "Air-launched: cruise missiles, hypersonic, stealth strike"}
-              {domain === "SEA"  && "Sea-launched: anti-ship, land-attack, submarine cruise"}
-              {domain === "LAND" && "Ground-launched: ballistic, quasi-ballistic, long-range strike"}
-            </span>
-          </div>
-
-          {/* ── STEP 2: Platform picker (replaces list when a weapon is selected) ── */}
+          {/* Platform picker (step 2) */}
           {selectedWeapon ? (
             <div className="flex flex-col flex-1 overflow-hidden">
-              {/* Header */}
-              <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#1a2a40] bg-[#060c18] shrink-0">
+              <div className="flex items-start justify-between px-4 py-3 shrink-0"
+                style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", background: "rgba(6,14,28,0.30)" }}>
                 <div>
-                  <div className="text-[9px] font-mono text-gray-600 tracking-widest mb-0.5 uppercase">
-                    Select Launch Platform
+                  <div className="gl-label mb-1">Select Platform</div>
+                  <div className="font-mono text-[12px] font-semibold" style={{ color: "var(--t1)" }}>
+                    {selectedWeapon.name}
                   </div>
-                  <div className="text-blue-300 font-mono text-xs font-bold">{selectedWeapon.name}</div>
-                  <div className="text-gray-600 font-mono text-[9px] mt-0.5">
-                    M{selectedWeapon.speed_mach} · {selectedWeapon.range_km} km range
+                  <div className="font-mono text-[9px] mt-0.5" style={{ color: "var(--t3)" }}>
+                    Mach {selectedWeapon.speed_mach} · {selectedWeapon.range_km} km
                   </div>
                 </div>
-                <button
-                  onClick={() => setSelectedWeapon(null)}
-                  className="text-gray-600 hover:text-white text-sm leading-none self-start mt-0.5"
-                  title="Back to weapons"
-                >
+                <button onClick={() => setSelectedWeapon(null)}
+                  className="font-mono text-[11px] leading-none transition-colors duration-150 mt-0.5"
+                  style={{ color: "var(--t3)" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--t1)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--t3)")}>
                   ✕
                 </button>
               </div>
-
-              {/* Compatible platform list */}
-              <div className="flex-1 overflow-y-auto p-2 space-y-2">
+              <div className="flex-1 overflow-y-auto p-3 space-y-2">
                 {platforms
                   .filter((p) => p.compatible_weapons?.includes(selectedWeapon.id))
                   .map((platform) => (
@@ -715,17 +923,17 @@ function AssetsPanel({
             </div>
 
           ) : (
-            /* ── STEP 1: Grouped accordion list ── */
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            /* Weapon catalog list */
+            <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
               {loading ? (
-                <div className="text-gray-600 font-mono text-xs p-4 text-center tracking-widest animate-pulse">
-                  LOADING CATALOG…
-                </div>
+                <div className="font-mono text-[9px] p-4 text-center tracking-[0.2em] animate-pulse"
+                  style={{ color: "var(--t3)" }}>LOADING…</div>
               ) : (
                 <>
-                  {/* Munitions grouped by type */}
                   {groupBy(filtered, (w) => w.type).size === 0 && filteredPlatforms.length === 0 && (
-                    <div className="text-gray-600 font-mono text-xs p-3">Nothing in {domain} catalog.</div>
+                    <div className="font-mono text-[9px] p-3" style={{ color: "var(--t3)" }}>
+                      Nothing in {domain} catalog.
+                    </div>
                   )}
                   {Array.from(groupBy(filtered, (w) => w.type).entries()).map(([type, group], i) => (
                     <CategoryAccordion
@@ -735,24 +943,18 @@ function AssetsPanel({
                       defaultOpen={i === 0}
                     >
                       {group.map((w) => {
-                        const hasCompatiblePlatforms = platforms.some(
-                          (p) => p.compatible_weapons?.includes(w.id),
-                        );
+                        const hasCompatiblePlatforms = platforms.some((p) => p.compatible_weapons?.includes(w.id));
                         return (
                           <WeaponCard
                             key={w.id}
                             weapon={w}
                             requiresPlatform={hasCompatiblePlatforms}
-                            onDeploy={() =>
-                              hasCompatiblePlatforms ? setSelectedWeapon(w) : onSetPendingWeapon(w)
-                            }
+                            onDeploy={() => hasCompatiblePlatforms ? setSelectedWeapon(w) : onSetPendingWeapon(w)}
                           />
                         );
                       })}
                     </CategoryAccordion>
                   ))}
-
-                  {/* Standalone platforms (deploy aircraft without a specific weapon) */}
                   {filteredPlatforms.length > 0 &&
                     Array.from(groupBy(filteredPlatforms, (p) => p.type).entries()).map(([type, group]) => (
                       <CategoryAccordion
@@ -766,12 +968,8 @@ function AssetsPanel({
                             platform={p}
                             onDeploy={() =>
                               onSetPendingWeapon({
-                                name: p.name,
-                                domain: p.domain,
-                                speed_mach: p.speed_mach,
-                                cruise_altitude_m: [8000, 12000],
-                                stealth: p.stealth,
-                                evasion_capable: true,
+                                name: p.name, domain: p.domain, speed_mach: p.speed_mach,
+                                cruise_altitude_m: [8000, 12000], stealth: p.stealth, evasion_capable: true,
                               })
                             }
                           />
@@ -787,49 +985,48 @@ function AssetsPanel({
 
       {/* ── TARGETS TAB ── */}
       {tab === "TARGETS" && (
-        <div className="flex-1 overflow-y-auto p-3 space-y-4">
-
-          {/* Click-to-place instruction */}
-          <div className="bg-[#0a1628] border border-red-900/50 rounded p-3">
-            <div className="text-red-400 font-mono text-[10px] mb-1.5 tracking-widest">CLICK-TO-PLACE</div>
-            <p className="text-gray-500 font-mono text-xs leading-relaxed">
-              In <span className="text-cyan-400">PLANNING</span> mode, click anywhere
-              on the globe to drop a target at that location.
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div className="rounded-lg p-3.5" style={{ ...GPC }}>
+            <div className="gl-label mb-2">Click-to-Place</div>
+            <p className="font-mono text-[10px] leading-relaxed" style={{ color: "var(--t2)" }}>
+              In <span style={{ color: "var(--ac-cyan)" }}>PLANNING</span> mode, click anywhere on the
+              globe to drop a target at that location.
             </p>
           </div>
-
-          {/* Manual coordinate entry */}
-          <div className="border-t border-[#1a2a40] pt-3">
-            <div className="text-gray-500 font-mono text-[10px] tracking-widest mb-2">
-              MANUAL COORDINATES
-            </div>
-            <div className="space-y-1.5">
-              <input
-                type="number"
-                placeholder="Latitude (−90 to 90)"
-                value={targetForm.lat}
-                onChange={(e) => setTargetForm((f) => ({ ...f, lat: e.target.value }))}
-                className="w-full bg-[#0a1628] border border-[#1a2a40] focus:border-red-800 rounded px-2 py-1.5 text-xs font-mono text-white placeholder-gray-700 outline-none transition-colors"
-              />
-              <input
-                type="number"
-                placeholder="Longitude (−180 to 180)"
-                value={targetForm.lon}
-                onChange={(e) => setTargetForm((f) => ({ ...f, lon: e.target.value }))}
-                className="w-full bg-[#0a1628] border border-[#1a2a40] focus:border-red-800 rounded px-2 py-1.5 text-xs font-mono text-white placeholder-gray-700 outline-none transition-colors"
-              />
-              <input
-                type="text"
-                placeholder="Label (optional)"
-                value={targetForm.label}
-                onChange={(e) => setTargetForm((f) => ({ ...f, label: e.target.value }))}
-                className="w-full bg-[#0a1628] border border-[#1a2a40] focus:border-red-800 rounded px-2 py-1.5 text-xs font-mono text-white placeholder-gray-700 outline-none transition-colors"
-              />
+          <div className="pt-2" style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+            <div className="gl-label mb-2.5">Manual Coordinates</div>
+            <div className="space-y-2">
+              {[
+                { key: "lat", placeholder: "Latitude (−90 to 90)" },
+                { key: "lon", placeholder: "Longitude (−180 to 180)" },
+                { key: "label", placeholder: "Label (optional)" },
+              ].map(({ key, placeholder }) => (
+                <input
+                  key={key}
+                  type="text"
+                  inputMode={key !== "label" ? "decimal" : undefined}
+                  placeholder={placeholder}
+                  value={targetForm[key as keyof typeof targetForm]}
+                  onChange={(e) => setTargetForm((f) => ({ ...f, [key]: e.target.value }))}
+                  className="w-full rounded-md px-3 py-2 font-mono text-[10px] outline-none transition-all duration-150"
+                  style={{
+                    background: "rgba(6,14,28,0.60)",
+                    border: "1px solid rgba(255,255,255,0.07)",
+                    color: "var(--t1)",
+                  }}
+                  onFocus={(e) => (e.currentTarget.style.borderColor = "rgba(74,154,255,0.35)")}
+                  onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.07)")}
+                />
+              ))}
               <button
                 onClick={handlePlaceTarget}
                 disabled={placing || !targetForm.lat || !targetForm.lon}
-                className="w-full py-1.5 text-xs font-mono bg-red-900 hover:bg-red-800 border border-red-700 rounded text-red-200 tracking-widest transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
+                className="w-full py-2 font-mono text-[10px] rounded-md tracking-[0.16em] transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  background: "rgba(216,56,56,0.10)",
+                  color: "rgba(220,100,100,0.90)",
+                  border: "1px solid rgba(216,56,56,0.30)",
+                }}>
                 {placing ? "PLACING…" : "⊕  PLACE TARGET"}
               </button>
             </div>
@@ -839,26 +1036,6 @@ function AssetsPanel({
     </div>
   );
 }
-
-// ── WeaponCard ────────────────────────────────────────────────────────────────
-
-const DOMAIN_STYLE = {
-  AIR:  {
-    badge: "text-blue-400 border-blue-800 bg-blue-950/30",
-    btn:   "border-blue-800 bg-blue-950/50 hover:bg-blue-900/60 text-blue-300",
-    dot:   "bg-blue-500",
-  },
-  SEA:  {
-    badge: "text-cyan-400 border-cyan-800 bg-cyan-950/30",
-    btn:   "border-cyan-800 bg-cyan-950/50 hover:bg-cyan-900/60 text-cyan-300",
-    dot:   "bg-cyan-500",
-  },
-  LAND: {
-    badge: "text-green-400 border-green-800 bg-green-950/30",
-    btn:   "border-green-800 bg-green-950/50 hover:bg-green-900/60 text-green-300",
-    dot:   "bg-green-500",
-  },
-} as const;
 
 // ── Accordion helpers ─────────────────────────────────────────────────────────
 
@@ -874,49 +1051,51 @@ function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
 }
 
 const TYPE_LABEL: Record<string, string> = {
-  CRUISE_MISSILE:       "Cruise Missiles",
-  ANTI_SHIP_MISSILE:    "Anti-Ship Missiles",
-  HYPERSONIC_MISSILE:   "Hypersonic Missiles",
-  BALLISTIC_MISSILE:    "Ballistic Missiles",
-  QUASI_BALLISTIC:      "Quasi-Ballistic Missiles",
-  PLATFORM_FIGHTER:     "Fighters",
-  PLATFORM_BOMBER:      "Bombers",
-  PLATFORM_TANKER:      "Tankers",
-  PLATFORM_EW:          "EW Aircraft",
-  PLATFORM_DESTROYER:   "Destroyers",
-  PLATFORM_CRUISER:     "Cruisers",
-  PLATFORM_SUBMARINE:   "Submarines",
+  CRUISE_MISSILE:     "Cruise Missiles",
+  ANTI_SHIP_MISSILE:  "Anti-Ship Missiles",
+  HYPERSONIC_MISSILE: "Hypersonic Missiles",
+  BALLISTIC_MISSILE:  "Ballistic Missiles",
+  QUASI_BALLISTIC:    "Quasi-Ballistic",
+  PLATFORM_FIGHTER:   "Fighters",
+  PLATFORM_BOMBER:    "Bombers",
+  PLATFORM_TANKER:    "Tankers",
+  PLATFORM_EW:        "EW Aircraft",
+  PLATFORM_DESTROYER: "Destroyers",
+  PLATFORM_CRUISER:   "Cruisers",
+  PLATFORM_SUBMARINE: "Submarines",
 };
 
 function CategoryAccordion({
-  label,
-  count,
-  defaultOpen = false,
-  children,
+  label, count, defaultOpen = false, children,
 }: {
-  label: string;
-  count: number;
-  defaultOpen?: boolean;
-  children: ReactNode;
+  label: string; count: number; defaultOpen?: boolean; children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
   return (
-    <div className="border border-[#1a2a40] rounded overflow-hidden">
+    <div className="rounded-lg overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.06)" }}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-mono tracking-widest hover:bg-[#0f1828] transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2.5 font-mono text-[9px] tracking-[0.16em] transition-all duration-150"
+        style={{ background: open ? "rgba(18,32,58,0.50)" : "rgba(10,18,36,0.40)" }}
+        onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "rgba(18,32,58,0.60)")}
+        onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = open ? "rgba(18,32,58,0.50)" : "rgba(10,18,36,0.40)")}
       >
         <span className="flex items-center gap-2">
-          <span className={`text-gray-600 transition-transform duration-150 ${open ? "rotate-90" : ""}`}>▶</span>
-          <span className="text-gray-300 uppercase">{label}</span>
+          <span
+            className="text-[7px] transition-transform duration-150 inline-block"
+            style={{ color: "var(--t3)", transform: open ? "rotate(90deg)" : "none" }}>
+            ▶
+          </span>
+          <span style={{ color: open ? "var(--t1)" : "var(--t2)" }}>{label.toUpperCase()}</span>
         </span>
-        <span className="text-gray-600 text-[9px] bg-[#0a1628] border border-[#1a2a40] px-1.5 py-0.5 rounded">
+        <span className="font-mono text-[9px] px-1.5 py-0.5 rounded"
+          style={{ color: "var(--t4)", background: "rgba(4,10,22,0.6)", border: "1px solid rgba(255,255,255,0.05)" }}>
           {count}
         </span>
       </button>
       {open && (
-        <div className="p-2 space-y-2 border-t border-[#1a2a40] bg-[#060c18]">
+        <div className="p-2.5 space-y-2" style={{ borderTop: "1px solid rgba(255,255,255,0.05)", background: "rgba(4,10,22,0.35)" }}>
           {children}
         </div>
       )}
@@ -924,84 +1103,62 @@ function CategoryAccordion({
   );
 }
 
+// ── Domain colors — precomputed RGBA (can't append opacity hex to CSS vars) ──
+
+const DC = {
+  AIR:  { text: "#4a9aff", dimBorder: "rgba(74,154,255,0.22)",  dimBg: "rgba(74,154,255,0.08)" },
+  SEA:  { text: "#14c8e8", dimBorder: "rgba(20,200,232,0.22)",  dimBg: "rgba(20,200,232,0.08)" },
+  LAND: { text: "#1ab858", dimBorder: "rgba(26,184,88,0.22)",   dimBg: "rgba(26,184,88,0.08)" },
+} as const;
+
 // ── PlatformCard ──────────────────────────────────────────────────────────────
 
 function PlatformCard({
-  platform,
-  onDeploy,
-  deployLabel,
+  platform, onDeploy, deployLabel,
 }: {
-  platform: PlatformCatalogItem;
-  onDeploy: () => void;
-  deployLabel?: string;
+  platform: PlatformCatalogItem; onDeploy: () => void; deployLabel?: string;
 }) {
+  const dc = DC[platform.domain] ?? DC.AIR;
   const typeLabel = (TYPE_LABEL[platform.type] ?? platform.type.replace(/^PLATFORM_/, "").replace(/_/g, " ")).toUpperCase();
 
   return (
-    <div className="bg-[#090f1e] border border-[#1e2e48] hover:border-[#2a4060] rounded p-2.5 transition-colors">
+    <div className="rounded-lg p-3 transition-all duration-150"
+      style={{ background: "rgba(10,20,40,0.55)", border: "1px solid rgba(255,255,255,0.06)" }}
+      onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.borderColor = "rgba(255,255,255,0.10)")}
+      onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.borderColor = "rgba(255,255,255,0.06)")}>
 
-      {/* Name + type badge */}
       <div className="flex items-start justify-between gap-1 mb-0.5">
-        <span className="text-white font-mono text-xs font-bold leading-tight">{platform.name}</span>
-        <span className="shrink-0 text-[9px] font-mono px-1 py-0.5 border rounded text-blue-300 border-blue-900 bg-blue-950/30">
+        <span className="font-mono text-[11px] font-semibold leading-tight" style={{ color: "var(--t1)" }}>
+          {platform.name}
+        </span>
+        <span className="shrink-0 font-mono text-[8px] px-1.5 py-0.5 rounded"
+          style={{ color: dc.text, background: dc.dimBg, border: `1px solid ${dc.dimBorder}` }}>
           {typeLabel}
         </span>
       </div>
-
-      {/* Full name */}
-      <div className="text-gray-600 font-mono text-[10px] leading-tight mb-2 truncate" title={platform.full_name}>
+      <div className="font-mono text-[9px] mb-2.5 truncate" style={{ color: "var(--t3)" }} title={platform.full_name}>
         {platform.full_name}
       </div>
-
-      {/* Stats */}
       <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-        <span className="text-[10px] font-mono">
-          <span className="text-gray-600">M </span>
-          <span className="text-gray-300">{platform.speed_mach}</span>
-        </span>
-        <span className="text-gray-700">·</span>
-        <span className="text-[10px] font-mono">
-          <span className="text-gray-600">RNG </span>
-          <span className="text-gray-300">{platform.range_km} km</span>
-        </span>
+        <DataPill label="M" value={String(platform.speed_mach)} />
+        <span style={{ color: "var(--t4)" }}>·</span>
+        <DataPill label="RNG" value={`${platform.range_km} km`} />
         {platform.payload_kg != null && (
-          <>
-            <span className="text-gray-700">·</span>
-            <span className="text-[10px] font-mono">
-              <span className="text-gray-600">PLD </span>
-              <span className="text-gray-300">{(platform.payload_kg / 1000).toFixed(0)}t</span>
-            </span>
-          </>
+          <><span style={{ color: "var(--t4)" }}>·</span>
+          <DataPill label="PLD" value={`${(platform.payload_kg / 1000).toFixed(0)}t`} /></>
         )}
-        {platform.stealth && (
-          <span className="text-[9px] font-mono px-1 py-0.5 border rounded text-purple-400 border-purple-900 bg-purple-950/40">
-            STEALTH
-          </span>
-        )}
-        {platform.refuelable && (
-          <span className="text-[9px] font-mono px-1 py-0.5 border rounded text-sky-400 border-sky-900 bg-sky-950/30">
-            TANKER
-          </span>
-        )}
+        {platform.stealth && <CapabilityTag label="STEALTH" color="rgba(120,72,232,0.85)" bg="rgba(120,72,232,0.10)" border="rgba(120,72,232,0.25)" />}
+        {platform.refuelable && <CapabilityTag label="TANKER" color="rgba(20,200,232,0.85)" bg="rgba(20,200,232,0.08)" border="rgba(20,200,232,0.22)" />}
       </div>
-
-      {/* Country */}
-      <div className="text-gray-600 font-mono text-[10px] mb-2">
+      <div className="font-mono text-[9px] mb-3" style={{ color: "var(--t3)" }}>
         {platform.country}{platform.crew != null ? ` · ${platform.crew}-crew` : ""}
       </div>
-
-      {/* Compatible weapons */}
-      {platform.compatible_weapons && platform.compatible_weapons.length > 0 && (
-        <div className="text-gray-700 font-mono text-[10px] mb-2 truncate">
-          Arms: {platform.compatible_weapons.slice(0, 3).join(", ")}
-        </div>
-      )}
-
-      {/* Deploy button */}
       <button
         onClick={onDeploy}
-        className="w-full py-1 text-[10px] font-mono border rounded tracking-widest transition-colors border-blue-900 bg-blue-950/30 hover:bg-blue-900/50 text-blue-300"
-      >
+        className="w-full py-1.5 font-mono text-[9px] rounded-md tracking-[0.14em] transition-all duration-150"
+        style={{ color: dc.text, background: dc.dimBg, border: `1px solid ${dc.dimBorder}` }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.06)"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = dc.dimBg; }}>
         {deployLabel ?? "⊕  PLACE ON MAP"}
       </button>
     </div>
@@ -1011,74 +1168,73 @@ function PlatformCard({
 // ── WeaponCard ────────────────────────────────────────────────────────────────
 
 function WeaponCard({
-  weapon,
-  onDeploy,
-  requiresPlatform = false,
+  weapon, onDeploy, requiresPlatform = false,
 }: {
-  weapon: WeaponCatalogItem;
-  onDeploy: () => void;
-  requiresPlatform?: boolean;
+  weapon: WeaponCatalogItem; onDeploy: () => void; requiresPlatform?: boolean;
 }) {
-  const style = DOMAIN_STYLE[weapon.domain] ?? DOMAIN_STYLE.AIR;
+  const dc = DC[weapon.domain] ?? DC.AIR;
 
   return (
-    <div className="bg-[#0a1628] border border-[#1a2a40] hover:border-[#2a4060] rounded p-2.5 transition-colors group">
+    <div className="rounded-lg p-3 transition-all duration-150"
+      style={{ background: "rgba(10,20,40,0.55)", border: "1px solid rgba(255,255,255,0.06)" }}
+      onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.borderColor = "rgba(255,255,255,0.10)")}
+      onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.borderColor = "rgba(255,255,255,0.06)")}>
 
-      {/* Name + domain badge */}
       <div className="flex items-start justify-between gap-1 mb-0.5">
-        <span className="text-white font-mono text-xs font-bold leading-tight">{weapon.name}</span>
-        <span className={`shrink-0 text-[9px] font-mono px-1 py-0.5 border rounded ${style.badge}`}>
+        <span className="font-mono text-[11px] font-semibold leading-tight" style={{ color: "var(--t1)" }}>
+          {weapon.name}
+        </span>
+        <span className="shrink-0 font-mono text-[8px] px-1.5 py-0.5 rounded"
+          style={{ color: dc.text, background: dc.dimBg, border: `1px solid ${dc.dimBorder}` }}>
           {weapon.domain}
         </span>
       </div>
-
-      {/* Full name */}
-      <div className="text-gray-600 font-mono text-[10px] leading-tight mb-2 truncate" title={weapon.full_name}>
+      <div className="font-mono text-[9px] mb-2.5 truncate" style={{ color: "var(--t3)" }} title={weapon.full_name}>
         {weapon.full_name}
       </div>
-
-      {/* Stats row */}
       <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-        <span className="text-[10px] font-mono">
-          <span className="text-gray-600">M </span>
-          <span className="text-gray-300">{weapon.speed_mach}</span>
-        </span>
-        <span className="text-gray-700">·</span>
-        <span className="text-[10px] font-mono">
-          <span className="text-gray-600">RNG </span>
-          <span className="text-gray-300">{weapon.range_km} km</span>
-        </span>
-        {weapon.stealth && (
-          <span className="text-[9px] font-mono px-1 py-0.5 border rounded text-purple-400 border-purple-900 bg-purple-950/40">
-            STEALTH
-          </span>
-        )}
-        {weapon.evasion_capable && (
-          <span className="text-[9px] font-mono px-1 py-0.5 border rounded text-yellow-500 border-yellow-900 bg-yellow-950/30">
-            EVADE
-          </span>
-        )}
+        <DataPill label="M" value={String(weapon.speed_mach)} />
+        <span style={{ color: "var(--t4)" }}>·</span>
+        <DataPill label="RNG" value={`${weapon.range_km} km`} />
+        {weapon.stealth && <CapabilityTag label="STEALTH" color="rgba(120,72,232,0.85)" bg="rgba(120,72,232,0.10)" border="rgba(120,72,232,0.25)" />}
+        {weapon.evasion_capable && <CapabilityTag label="EVADE" color="rgba(208,136,32,0.85)" bg="rgba(208,136,32,0.10)" border="rgba(208,136,32,0.25)" />}
       </div>
-
-      {/* Type · country */}
-      <div className="text-gray-600 font-mono text-[10px] mb-1 truncate">
+      <div className="font-mono text-[9px] mb-0.5 truncate" style={{ color: "var(--t3)" }}>
         {weapon.type.replace(/_/g, " ")} · {weapon.country}
       </div>
-
-      {/* Guidance */}
       {weapon.guidance?.length > 0 && (
-        <div className="text-gray-700 font-mono text-[10px] mb-2 truncate">
+        <div className="font-mono text-[8px] mb-3 truncate" style={{ color: "var(--t4)" }}>
           {weapon.guidance.slice(0, 3).join(" / ")}
         </div>
       )}
-
-      {/* Deploy button */}
       <button
         onClick={onDeploy}
-        className={`w-full py-1 text-[10px] font-mono border rounded tracking-widest transition-colors ${style.btn}`}
-      >
+        className="w-full py-1.5 font-mono text-[9px] rounded-md tracking-[0.14em] transition-all duration-150"
+        style={{ color: dc.text, background: dc.dimBg, border: `1px solid ${dc.dimBorder}` }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.06)"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = dc.dimBg; }}>
         {requiresPlatform ? "▶  SELECT PLATFORM" : "⊕  PLACE ON MAP"}
       </button>
     </div>
+  );
+}
+
+// ── DataPill & CapabilityTag — micro-components ───────────────────────────────
+
+function DataPill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="font-mono text-[10px]">
+      <span style={{ color: "var(--t3)" }}>{label} </span>
+      <span style={{ color: "var(--t1)" }}>{value}</span>
+    </span>
+  );
+}
+
+function CapabilityTag({ label, color, bg, border }: { label: string; color: string; bg: string; border: string }) {
+  return (
+    <span className="font-mono text-[8px] px-1.5 py-0.5 rounded"
+      style={{ color, background: bg, border: `1px solid ${border}` }}>
+      {label}
+    </span>
   );
 }

@@ -2,8 +2,7 @@
 
 /**
  * ToT Convergence Panel
- * D3 line chart showing RMS(τᵢ - τ*) over simulation time.
- * Goes to zero when all weapons have converged on simultaneous impact.
+ * D3 line chart: RMS(τᵢ − τ*) over simulation time → approaches 0 at simultaneous impact.
  */
 
 import { useEffect, useRef } from "react";
@@ -19,19 +18,12 @@ export default function TotConvergencePanel() {
       (w) => !["DESTROYED", "IMPACTED"].includes((w.properties.suda_state as string) ?? ""),
     );
     if (weapons.length === 0) return;
-
-    const taus = weapons
-      .map((w) => w.properties.tau_i as number)
-      .filter((t) => typeof t === "number");
+    const taus = weapons.map((w) => w.properties.tau_i as number).filter((t) => typeof t === "number");
     if (taus.length === 0) return;
-
     const mean = taus.reduce((a, b) => a + b, 0) / taus.length;
     const rms = Math.sqrt(taus.reduce((s, t) => s + (t - mean) ** 2, 0) / taus.length);
-
     historyRef.current.push({ t: simTimeS, rms });
-    // Keep last 120 samples
     if (historyRef.current.length > 120) historyRef.current.shift();
-
     renderChart();
   }, [simTimeS]);
 
@@ -42,8 +34,8 @@ export default function TotConvergencePanel() {
     if (data.length < 2) return;
 
     import("d3").then((d3) => {
-      const W = 148, H = 72;
-      const margin = { top: 6, right: 6, bottom: 16, left: 30 };
+      const W = 190, H = 72;
+      const margin = { top: 5, right: 5, bottom: 14, left: 28 };
       const iW = W - margin.left - margin.right;
       const iH = H - margin.top - margin.bottom;
 
@@ -55,36 +47,29 @@ export default function TotConvergencePanel() {
         .append("g")
         .attr("transform", `translate(${margin.left},${margin.top})`);
 
-      const xScale = d3
-        .scaleLinear()
-        .domain([data[0].t, data[data.length - 1].t])
-        .range([0, iW]);
-      const yScale = d3
-        .scaleLinear()
-        .domain([0, Math.max(5, d3.max(data, (d) => d.rms) ?? 5)])
-        .range([iH, 0]);
+      const xScale = d3.scaleLinear().domain([data[0].t, data[data.length - 1].t]).range([0, iW]);
+      const yScale = d3.scaleLinear().domain([0, Math.max(5, d3.max(data, (d) => d.rms) ?? 5)]).range([iH, 0]);
 
-      // Grid line at y=2 (ToT tolerance)
+      // Convergence threshold line (2s)
       g.append("line")
-        .attr("x1", 0)
-        .attr("x2", iW)
-        .attr("y1", yScale(2))
-        .attr("y2", yScale(2))
-        .attr("stroke", "#22c55e")
+        .attr("x1", 0).attr("x2", iW)
+        .attr("y1", yScale(2)).attr("y2", yScale(2))
+        .attr("stroke", "rgba(26,184,88,0.40)")
         .attr("stroke-dasharray", "3,3")
-        .attr("stroke-width", 0.5);
+        .attr("stroke-width", 0.8);
+
+      // Area fill
+      const area = d3.area<{ t: number; rms: number }>()
+        .x((d) => xScale(d.t)).y0(iH).y1((d) => yScale(d.rms)).curve(d3.curveMonotoneX);
+      g.append("path").datum(data)
+        .attr("fill", "rgba(20,200,232,0.07)").attr("d", area);
 
       // RMS line
-      const line = d3
-        .line<{ t: number; rms: number }>()
-        .x((d) => xScale(d.t))
-        .y((d) => yScale(d.rms))
-        .curve(d3.curveMonotoneX);
-
-      g.append("path")
-        .datum(data)
+      const line = d3.line<{ t: number; rms: number }>()
+        .x((d) => xScale(d.t)).y((d) => yScale(d.rms)).curve(d3.curveMonotoneX);
+      g.append("path").datum(data)
         .attr("fill", "none")
-        .attr("stroke", "#22d3ee")
+        .attr("stroke", "rgba(20,200,232,0.80)")
         .attr("stroke-width", 1.5)
         .attr("d", line);
 
@@ -92,36 +77,41 @@ export default function TotConvergencePanel() {
       g.append("g")
         .attr("transform", `translate(0,${iH})`)
         .call(d3.axisBottom(xScale).ticks(3).tickFormat((d) => `${d}s`))
-        .selectAll("text,line,path")
-        .attr("stroke", "#4b5563")
-        .attr("fill", "#4b5563")
-        .style("font-size", "8px");
+        .selectAll("text, line, path")
+        .attr("stroke", "rgba(54,78,104,0.9)")
+        .attr("fill",   "rgba(54,78,104,0.9)")
+        .style("font-size", "7px");
 
       g.append("g")
         .call(d3.axisLeft(yScale).ticks(3))
-        .selectAll("text,line,path")
-        .attr("stroke", "#4b5563")
-        .attr("fill", "#4b5563")
-        .style("font-size", "8px");
+        .selectAll("text, line, path")
+        .attr("stroke", "rgba(54,78,104,0.9)")
+        .attr("fill",   "rgba(54,78,104,0.9)")
+        .style("font-size", "7px");
     });
   };
 
   const weapons = getWeapons();
   const taus = weapons.map((w) => w.properties.tau_i as number).filter((t) => typeof t === "number");
   const mean = taus.length ? taus.reduce((a, b) => a + b, 0) / taus.length : 0;
-  const rms = taus.length
-    ? Math.sqrt(taus.reduce((s, t) => s + (t - mean) ** 2, 0) / taus.length)
-    : 0;
+  const rms = taus.length ? Math.sqrt(taus.reduce((s, t) => s + (t - mean) ** 2, 0) / taus.length) : 0;
+  const converged = rms < 2 && rms > 0;
 
   return (
-    <div className="bg-[#0a1628] border border-[#1a2a40] rounded p-2">
-      <div className="text-gray-500 text-xs font-mono mb-1 flex justify-between">
-        <span>TOT CONVERGENCE</span>
-        <span className={rms < 2 ? "text-green-400" : "text-yellow-400"}>
-          RMS {rms.toFixed(2)}s
+    <div className="px-4 pt-3.5 pb-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="gl-label">ToT Convergence</span>
+        <span className="font-mono text-[9px] tabular-nums"
+          style={{ color: converged ? "var(--ac-green)" : rms > 0 ? "var(--ac-amber)" : "var(--t4)" }}>
+          {rms > 0 ? `${rms.toFixed(2)}s RMS` : "—"}
         </span>
       </div>
-      <svg ref={svgRef} />
+      <svg ref={svgRef} style={{ display: "block", overflow: "visible" }} />
+      {rms === 0 && (
+        <div className="font-mono text-[9px] mt-1.5 text-center" style={{ color: "var(--t4)" }}>
+          Awaiting simulation data
+        </div>
+      )}
     </div>
   );
 }

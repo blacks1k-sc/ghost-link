@@ -1,21 +1,60 @@
 @import "tailwindcss";
 
-html,
-body {
+/* ── JetBrains Mono ───────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap');
+
+@theme {
+  --font-family-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+}
+
+/* ── Design tokens ────────────────────────────────────────────────────────── */
+:root {
+  /* App chrome (NOT panel surfaces) */
+  --app-bg:    #010a16;
+  --bar-bg:    rgba(4, 12, 26, 0.92);
+  --bar-blur:  blur(24px) saturate(160%);
+
+  /* Glass panel surfaces — applied over the globe, must be translucent */
+  --gp-bg:     rgba(10, 20, 42, 0.78);
+  --gp-blur:   blur(28px) saturate(180%);
+  --gp-border: rgba(255, 255, 255, 0.08);
+  --gp-radius: 10px;
+  --gp-shadow:
+    0 12px 52px rgba(0, 0, 0, 0.60),
+    0  3px 14px rgba(0, 0, 0, 0.40),
+    inset 0  1px 0 rgba(255, 255, 255, 0.11),
+    inset 0 -1px 0 rgba(0,   0,   0,   0.20);
+
+  /* Section divider inside panels */
+  --gp-divider: rgba(255, 255, 255, 0.05);
+
+  /* Text — four stops, cool-white family */
+  --t1: #dce8f8;   /* primary content */
+  --t2: #7090b0;   /* labels / secondary */
+  --t3: #364e68;   /* muted / timestamps */
+  --t4: #1a3050;   /* ghost / disabled */
+
+  /* Accents — each color has ONE semantic role */
+  --ac-blue:   #4a9aff;   /* interactive elements */
+  --ac-cyan:   #14c8e8;   /* live telemetry data */
+  --ac-amber:  #d08820;   /* caution / speed */
+  --ac-red:    #d83838;   /* hostile / launch / threat */
+  --ac-green:  #1ab858;   /* converged / safe */
+  --ac-purple: #7848e8;   /* stealth / EW */
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+html, body {
   height: 100%;
   margin: 0;
   padding: 0;
-  background: #000;
-  color: #fff;
+  background: var(--app-bg);
+  color: var(--t1);
 }
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
+*, *::before, *::after { box-sizing: border-box; }
 
-/* Force Cesium's internal widget + canvas to fill whatever container we give it */
+/* ── Cesium canvas fill ──────────────────────────────────────────────────── */
 .cesium-widget,
 .cesium-widget canvas {
   width: 100% !important;
@@ -24,3 +63,75 @@ body {
   top: 0 !important;
   left: 0 !important;
 }
+
+/* ── Glass panel — core surface system ───────────────────────────────────── */
+/* Use for any panel floating over the Cesium globe */
+.gp {
+  background:             var(--gp-bg);
+  backdrop-filter:        var(--gp-blur);
+  -webkit-backdrop-filter: var(--gp-blur);
+  border:                 1px solid var(--gp-border);
+  border-radius:          var(--gp-radius);
+  box-shadow:             var(--gp-shadow);
+}
+
+/* Glass bar — full-width chrome (header, footer) */
+.gbar {
+  background:             var(--bar-bg);
+  backdrop-filter:        var(--bar-blur);
+  -webkit-backdrop-filter: var(--bar-blur);
+  border-bottom:          1px solid rgba(255, 255, 255, 0.06);
+  box-shadow:             0 2px 32px rgba(0, 0, 0, 0.65),
+                          inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* Glass bar — bottom variant */
+.gbar-top {
+  background:             var(--bar-bg);
+  backdrop-filter:        var(--bar-blur);
+  -webkit-backdrop-filter: var(--bar-blur);
+  border-top:             1px solid rgba(255, 255, 255, 0.06);
+  box-shadow:             0 -2px 32px rgba(0, 0, 0, 0.65),
+                          inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Section header label — strict 9px caps */
+.gl-label {
+  font-size: 9px;
+  font-family: var(--font-family-mono, monospace);
+  letter-spacing: 0.20em;
+  text-transform: uppercase;
+  color: var(--t3);
+}
+
+/* Panel inner section divider */
+.gp-div {
+  height: 1px;
+  background: var(--gp-divider);
+  margin: 0 12px;
+}
+
+/* ── Animations ──────────────────────────────────────────────────────────── */
+@keyframes launchPulse {
+  0%, 100% { box-shadow: var(--gp-shadow), 0 0 0 0 rgba(216, 56, 56, 0); }
+  50%       { box-shadow: var(--gp-shadow), 0 0 14px 3px rgba(216, 56, 56, 0.28); }
+}
+.launch-pulse { animation: launchPulse 2.8s ease-in-out infinite; }
+
+@keyframes offlineBlink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+.offline-blink { animation: offlineBlink 1.8s ease-in-out infinite; }
+
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.panel-enter { animation: fadeSlideIn 0.18s ease-out; }
+
+/* ── Scrollbar — ultra-thin ──────────────────────────────────────────────── */
+::-webkit-scrollbar         { width: 2px; height: 2px; }
+::-webkit-scrollbar-track   { background: transparent; }
+::-webkit-scrollbar-thumb   { background: rgba(255,255,255,0.10); border-radius: 1px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }

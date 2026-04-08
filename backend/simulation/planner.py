@@ -37,7 +37,7 @@ logger = logging.getLogger("planner")
 
 OLLAMA_URL = "http://localhost:11434"
 OLLAMA_MODEL = "llama3.1:8b"
-OLLAMA_TIMEOUT_S = 30.0
+OLLAMA_TIMEOUT_S = 120.0
 
 # ---------------------------------------------------------------------------
 # Data file helpers
@@ -264,7 +264,7 @@ async def _call_ollama(user_query: str, context_json: str) -> dict | None:
         "format": "json",
     }
     try:
-        timeout = aiohttp.ClientTimeout(total=OLLAMA_TIMEOUT_S)
+        timeout = aiohttp.ClientTimeout(connect=5.0, sock_read=OLLAMA_TIMEOUT_S)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(f"{OLLAMA_URL}/api/generate", json=payload) as resp:
                 if resp.status != 200:

@@ -49,16 +49,23 @@ export interface SimEvent {
 // Store interface
 // ---------------------------------------------------------------------------
 
+interface ImpactFlash {
+  id: string;           // unique flash id
+  weaponLabel: string;
+}
+
 interface EntityGraphState {
   entities: Record<string, Entity>;
   eventLog: SimEvent[];
   simRunning: boolean;
   simTimeS: number;
   wsConnected: boolean;
+  impactFlashes: ImpactFlash[];
 
   // Actions
   upsertEntity: (entity: Entity) => void;
   removeEntity: (id: string) => void;
+  clearImpactFlash: (id: string) => void;
   applySnapshot: (snapshot: { entities: Record<string, Entity> }) => void;
   appendEvent: (event: SimEvent) => void;
   setSimRunning: (running: boolean) => void;
@@ -80,11 +87,31 @@ export const useEntityGraph = create<EntityGraphState>((set, get) => ({
   simRunning: false,
   simTimeS: 0,
   wsConnected: false,
+  impactFlashes: [],
 
   upsertEntity: (entity) =>
-    set((state) => ({
-      entities: { ...state.entities, [entity.id]: entity },
-    })),
+    set((state) => {
+      const prev = state.entities[entity.id];
+      const newState = entity.properties.suda_state as string | undefined;
+      const prevState = prev?.properties.suda_state as string | undefined;
+      const justImpacted = entity.type === "WEAPON"
+        && newState === "IMPACTED"
+        && prevState !== "IMPACTED";
+
+      const flash: ImpactFlash | null = justImpacted ? {
+        id: `flash-${entity.id}-${Date.now()}`,
+        weaponLabel: (entity.properties.label as string)
+          || (entity.properties.weapon_type as string)
+          || "WEAPON",
+      } : null;
+
+      return {
+        entities: { ...state.entities, [entity.id]: entity },
+        impactFlashes: flash
+          ? [...state.impactFlashes, flash]
+          : state.impactFlashes,
+      };
+    }),
 
   removeEntity: (id) =>
     set((state) => {
@@ -100,6 +127,11 @@ export const useEntityGraph = create<EntityGraphState>((set, get) => ({
     set((state) => ({
       // Keep last 500 events
       eventLog: [event, ...state.eventLog].slice(0, 500),
+    })),
+
+  clearImpactFlash: (id) =>
+    set((state) => ({
+      impactFlashes: state.impactFlashes.filter((f) => f.id !== id),
     })),
 
   setSimRunning: (running) => set({ simRunning: running }),

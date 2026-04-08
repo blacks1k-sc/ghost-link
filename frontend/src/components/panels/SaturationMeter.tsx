@@ -19,78 +19,88 @@ export default function SaturationMeter() {
   const { getWeapons, getThreats, simRunning } = useEntityGraph();
   const [mc, setMc] = useState<McResult | null>(null);
 
-  // Poll /saturation every 5s while sim is running
   useEffect(() => {
-    if (!simRunning) {
-      setMc(null);
-      return;
-    }
+    if (!simRunning) { setMc(null); return; }
     const poll = async () => {
       try {
         const res = await fetch(`${API}/saturation`);
         if (res.ok) setMc(await res.json());
-      } catch {
-        // backend unavailable — keep showing local formula
-      }
+      } catch { /* keep local formula */ }
     };
     poll();
     const id = setInterval(poll, 5000);
     return () => clearInterval(id);
   }, [simRunning]);
 
-  // Local formula fallback
   const weapons = getWeapons().filter(
     (w) => !["DESTROYED", "IMPACTED"].includes((w.properties.suda_state as string) ?? "")
   );
   const threats = getThreats();
   const nAttacking = weapons.length;
-  const nInterceptors = threats.reduce(
-    (sum, t) => sum + ((t.properties.missiles_remaining as number) ?? 8),
-    0
-  );
+  const nInterceptors = threats.reduce((sum, t) => sum + ((t.properties.missiles_remaining as number) ?? 8), 0);
   const pKillMean = threats.length
     ? threats.reduce((s, t) => s + ((t.properties.p_intercept_base as number) ?? 0.7), 0) / threats.length
     : 0.75;
 
-  // Prefer Monte Carlo result when available
   const useMc = mc && !mc.error && mc.trials_run > 0;
   const sc = useMc
     ? mc!.sc_mean
-    : nInterceptors === 0 || pKillMean === 0
-    ? Infinity
+    : nInterceptors === 0 || pKillMean === 0 ? Infinity
     : nAttacking / (nInterceptors * pKillMean);
 
   const scDisplay = isFinite(sc) ? sc.toFixed(2) : "∞";
-  const scColor =
-    !isFinite(sc) || sc > 1.5
-      ? "text-green-400"
-      : sc >= 0.8
-      ? "text-yellow-400"
-      : "text-red-400";
-  const scLabel =
-    !isFinite(sc) || sc > 1.5
-      ? "SATURATION"
-      : sc >= 0.8
-      ? "CONTESTED"
-      : "DEFENSIVE ADV";
+  const [scColor, scLabel] =
+    !isFinite(sc) || sc > 1.5 ? ["var(--ac-green)", "SATURATION"]
+    : sc >= 0.8              ? ["var(--ac-amber)", "CONTESTED"]
+    :                          ["var(--ac-red)",   "DEF ADV"];
+
+  // Bar fill: clamp to 0-100%
+  const barFill = isFinite(sc) ? Math.min(100, (sc / 2.0) * 100) : 100;
 
   return (
-    <div className="bg-[#0a1628] border border-[#1a2a40] rounded p-2">
-      <div className="text-gray-500 text-xs font-mono mb-1">
-        SATURATION COEFF {useMc && <span className="text-gray-600">[MC]</span>}
+    <div className="px-4 py-3">
+      <div className="flex items-center justify-between mb-0.5">
+        <span className="gl-label">Sat Coefficient</span>
+        {useMc && (
+          <span className="font-mono text-[8px] px-1 py-0.5 rounded"
+            style={{ color: "var(--t4)", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
+            MC
+          </span>
+        )}
       </div>
-      <div className={`text-2xl font-bold font-mono ${scColor}`}>{scDisplay}</div>
-      <div className={`text-xs font-mono ${scColor}`}>{scLabel}</div>
-      {useMc ? (
-        <div className="mt-1 text-gray-500 text-xs font-mono">
-          P(pen) {(mc!.penetration_rate_p50 * 100).toFixed(0)}%&nbsp;
-          [{(mc!.penetration_rate_p10 * 100).toFixed(0)}–{(mc!.penetration_rate_p90 * 100).toFixed(0)}%]
-        </div>
-      ) : (
-        <div className="mt-1 text-gray-600 text-xs font-mono">
-          {nAttacking}W / {nInterceptors}I×{(pKillMean * 100).toFixed(0)}%
-        </div>
-      )}
+
+      {/* Hero number */}
+      <div className="flex items-baseline gap-2 mt-1 mb-1.5">
+        <span className="font-mono font-bold tabular-nums leading-none" style={{ fontSize: 24, color: scColor }}>
+          {scDisplay}
+        </span>
+        <span className="font-mono text-[9px] tracking-[0.14em]" style={{ color: scColor, opacity: 0.65 }}>
+          {scLabel}
+        </span>
+      </div>
+
+      {/* Bar indicator */}
+      <div className="h-0.5 rounded-full mb-2 overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
+        <div
+          className="h-full rounded-full transition-all duration-700"
+          style={{ width: `${barFill}%`, background: scColor }}
+        />
+      </div>
+
+      {/* Detail */}
+      <div className="font-mono text-[9px]" style={{ color: "var(--t3)" }}>
+        {useMc ? (
+          <>
+            P(pen){" "}
+            <span style={{ color: "var(--t2)" }}>{(mc!.penetration_rate_p50 * 100).toFixed(0)}%</span>
+            <span style={{ color: "var(--t4)" }}>
+              {" "}[{(mc!.penetration_rate_p10 * 100).toFixed(0)}–{(mc!.penetration_rate_p90 * 100).toFixed(0)}%]
+            </span>
+          </>
+        ) : (
+          <>{nAttacking}W / {nInterceptors}I × {(pKillMean * 100).toFixed(0)}%</>
+        )}
+      </div>
     </div>
   );
 }
