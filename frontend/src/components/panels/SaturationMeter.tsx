@@ -54,7 +54,6 @@ export default function SaturationMeter() {
     : sc >= 0.8              ? ["var(--ac-amber)", "CONTESTED"]
     :                          ["var(--ac-red)",   "DEF ADV"];
 
-  // Bar fill: clamp to 0-100%
   const barFill = isFinite(sc) ? Math.min(100, (sc / 2.0) * 100) : 100;
 
   return (
@@ -63,7 +62,7 @@ export default function SaturationMeter() {
         <span className="gl-label">Sat Coefficient</span>
         {useMc && (
           <span className="font-mono text-[8px] px-1 py-0.5 rounded"
-            style={{ color: "var(--t4)", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
+            style={{ color: "var(--ink-3)", background: "rgba(25,21,15,0.08)", border: "1px solid rgba(25,21,15,0.12)" }}>
             MC
           </span>
         )}
@@ -74,13 +73,13 @@ export default function SaturationMeter() {
         <span className="font-mono font-bold tabular-nums leading-none" style={{ fontSize: 24, color: scColor }}>
           {scDisplay}
         </span>
-        <span className="font-mono text-[9px] tracking-[0.14em]" style={{ color: scColor, opacity: 0.65 }}>
+        <span className="font-mono text-[9px] tracking-[0.14em]" style={{ color: scColor, opacity: 0.75 }}>
           {scLabel}
         </span>
       </div>
 
       {/* Bar indicator */}
-      <div className="h-0.5 rounded-full mb-2 overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
+      <div className="h-0.5 rounded-full mb-2 overflow-hidden" style={{ background: "rgba(25,21,15,0.12)" }}>
         <div
           className="h-full rounded-full transition-all duration-700"
           style={{ width: `${barFill}%`, background: scColor }}
@@ -88,12 +87,12 @@ export default function SaturationMeter() {
       </div>
 
       {/* Detail */}
-      <div className="font-mono text-[9px]" style={{ color: "var(--t3)" }}>
+      <div className="font-mono text-[9px]" style={{ color: "var(--ink-3)" }}>
         {useMc ? (
           <>
             P(pen){" "}
-            <span style={{ color: "var(--t2)" }}>{(mc!.penetration_rate_p50 * 100).toFixed(0)}%</span>
-            <span style={{ color: "var(--t4)" }}>
+            <span style={{ color: "var(--ink-2)" }}>{(mc!.penetration_rate_p50 * 100).toFixed(0)}%</span>
+            <span style={{ color: "var(--ink-4)" }}>
               {" "}[{(mc!.penetration_rate_p10 * 100).toFixed(0)}–{(mc!.penetration_rate_p90 * 100).toFixed(0)}%]
             </span>
           </>

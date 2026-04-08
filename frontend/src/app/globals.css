@@ -41,28 +41,32 @@
   --app-bg:   #0c0b09;   /* globe / ink zone background */
 }
 
-/* ── Panels — warm opaque paper surfaces, NOT glass ─────────────────────── */
-/* Use on elements that sit alongside or overlay the dark globe               */
+/* ── Panels — highly translucent frosted linen surfaces over the dark globe ── */
 .lp {
-  background:   var(--linen);
-  border:       1px solid var(--linen-3);
-  border-top:   2px solid var(--ink);        /* thick ink top-edge accent */
-  border-radius: 2px;
-  box-shadow:   0 8px 48px rgba(0,0,0,0.28),
-                0 2px  8px rgba(0,0,0,0.14);
+  background:          rgba(237,234,227,0.36);
+  backdrop-filter:     blur(28px) saturate(200%);
+  -webkit-backdrop-filter: blur(28px) saturate(200%);
+  border:       1px solid rgba(237,234,227,0.28);
+  border-top:   2px solid rgba(25,21,15,0.80);   /* ink top-edge accent */
+  border-radius: 6px;
+  box-shadow:   0 12px 48px rgba(0,0,0,0.40),
+                0 2px  12px rgba(0,0,0,0.24),
+                inset 0 1px 0 rgba(255,255,255,0.18);
 }
 
-/* Nested card within a linen panel (slightly darker surface) */
+/* Nested card within a linen panel */
 .lp-card {
-  background:   var(--linen-2);
-  border:       1px solid var(--linen-3);
-  border-radius: 2px;
+  background:   rgba(213,209,201,0.30);
+  border:       1px solid rgba(213,209,201,0.35);
+  border-radius: 4px;
 }
 
-/* Linen bar — full-width chrome elements (top nav, bottom log header) */
+/* Linen bar — full-width chrome elements (top nav) */
 .linen-bar {
-  background:   var(--linen);
-  border-bottom: 1px solid var(--linen-3);
+  background:          rgba(237,234,227,0.42);
+  backdrop-filter:     blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-bottom: 1px solid rgba(213,209,201,0.35);
 }
 
 /* Ink bar — full-width dark zone (bottom engagement log) */

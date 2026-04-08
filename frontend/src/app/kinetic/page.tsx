@@ -21,21 +21,22 @@ const CesiumGlobe = dynamic(() => import("@/components/map/CesiumGlobe"), {
   ),
 });
 
-// ── Linen panel style — warm opaque paper surface over the dark globe ─────────
-// Opaque instead of glass. Paper panels floating above ink. Anduril-style.
+// ── Linen panel style — highly translucent frosted glass over the dark globe ──
 const LP: CSSProperties = {
-  background:   "var(--linen)",
-  border:       "1px solid var(--linen-3)",
-  borderTop:    "2px solid var(--ink)",
-  borderRadius: "2px",
-  boxShadow:    "0 8px 48px rgba(0,0,0,0.28), 0 2px 8px rgba(0,0,0,0.14)",
+  background:          "rgba(237,234,227,0.36)",
+  backdropFilter:      "blur(28px) saturate(200%)",
+  WebkitBackdropFilter:"blur(28px) saturate(200%)",
+  border:       "1px solid rgba(237,234,227,0.28)",
+  borderTop:    "2px solid rgba(25,21,15,0.80)",
+  borderRadius: "6px",
+  boxShadow:    "0 12px 48px rgba(0,0,0,0.40), 0 2px 12px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.18)",
 };
 
-// Lighter inner card within a linen panel
+// Inner card within a linen panel
 const LPC: CSSProperties = {
-  background:   "var(--linen-2)",
-  border:       "1px solid var(--linen-3)",
-  borderRadius: "2px",
+  background:   "rgba(213,209,201,0.30)",
+  border:       "1px solid rgba(213,209,201,0.35)",
+  borderRadius: "4px",
 };
 
 type Mode = "planning" | "live";
